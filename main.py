@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torchvision import datasets, models, transforms
 
-from trainer import BasicTrainer
+from trainer import ClassificationTrainer
 
 
 def main(**kwargs):
@@ -48,7 +48,7 @@ def main(**kwargs):
 
     # exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
-    trainer = BasicTrainer(model, optimizer, criterion, 'test.pt')
+    trainer = ClassificationTrainer(model, optimizer, criterion, 'test.pt')
     trainer.fit(dataloaders['train'], dataloaders['val'], 2)
 
 
