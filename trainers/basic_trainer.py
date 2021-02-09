@@ -23,12 +23,16 @@ class ClassificationTrainer:
         self.device = device
 
         self.model = self.model.to(self.device)
+        self.best_acc = 0
 
     def fit(self, train_dataloader, val_dataloader, n_epochs):
         for epoch in range(n_epochs):
-            print(self.run(train_dataloader, train=True))
-            print(self.run(val_dataloader, train=False))
-            self.save()
+            loss, acc = self.run(train_dataloader, train=True)
+            val_loss, val_acc = self.run(val_dataloader, train=False)
+
+            if self.best_acc < val_acc:
+                self.save()
+                self.best_acc = val_acc
 
     def run(self, dataloader, train=False, scheduler=None):
         if train:
@@ -48,14 +52,14 @@ class ClassificationTrainer:
 
             with torch.set_grad_enabled(train):
                 ys_hat = self.model(xs)
-                loss = self.criterion(ys_hat, ys)
+                loss = self.criterion(ys_hat, ys).mean()
 
                 if train:
                     loss.backward()
                     self.optimizer.step()
 
             pred_cls = torch.argmax(ys_hat, -1)
-            total_loss += loss.item() * xs.size(0)
+            total_loss += loss * xs.size(0)
             total_acc += torch.sum(pred_cls == ys.data)
             count += xs.size(0)
 

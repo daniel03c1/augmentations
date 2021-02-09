@@ -1,2 +1,2 @@
-from .trainer import *
+from .basic_trainer import *
 
