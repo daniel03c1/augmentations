@@ -8,11 +8,15 @@ class ModelsTest(unittest.TestCase):
     def test_controller(self):
         output_size = 10
         n_subpolicies = 5
+        batch_size = 4
         controller = Controller(output_size=output_size,
                                 n_subpolicies=n_subpolicies)
 
-        policy = controller()
-        self.assertEqual([*policy.size()], [n_subpolicies*4, output_size])
+        x = torch.zeros((batch_size, 1), dtype=torch.long)
+        policy = controller(x)
+        print(torch.argmax(policy, axis=-1))
+        self.assertEqual([*policy.size()], 
+                         [batch_size, n_subpolicies*4, output_size])
 
 
 if __name__ == '__main__':

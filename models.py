@@ -15,10 +15,9 @@ class Controller(nn.Module):
         self.embedding = nn.Embedding(output_size, emb_size)
         self.n_subpolicies = n_subpolicies
 
-    def forward(self):
-        x = torch.zeros((1, 1), dtype=torch.long)
+    def forward(self, x: torch.Tensor):
+        # x: [batch, 1] shaped tensor (dtype=torch.long)
         hn_cn = None
-
         tokens = []
 
         for i in range(self.n_subpolicies * 4):
@@ -27,7 +26,8 @@ class Controller(nn.Module):
             x = self.softmax(x)
 
             tokens.append(x)
-            x = torch.argmax(x, -1)
+            x = x.softmax(-1).squeeze(1) # [1, 1, dim] to [1, dim]
+            x = torch.multinomial(x, 1)
             
-        return torch.cat(tokens, axis=0).squeeze()
+        return torch.cat(tokens, axis=1)
 
