@@ -1,7 +1,7 @@
 import torch
 import torchvision.transforms.functional as TF
 
-
+# https://github.com/pytorch/vision/issues/3050
 # automatically registers operations (use @transforms.register)
 class BagOfOps:
     def __init__(self):
@@ -14,19 +14,28 @@ class BagOfOps:
             self.n_ops += 1
         return op
 
+    def __getitem__(self, index):
+        return self.ops[index]
+
 
 class Operation:
-    def __init__(self, magnitude_range):
-        if isinstance(magnitude_range, (int, float)):
-            magnitude_range = [-magnitude_range, magnitude_range]
-        assert len(magnitude_range) == 2, 'range must be a pair of numbers(float)'
-        self.range = magnitude_range
+    scale = 1
+    bias = 0
+
+    def __init__(self, magnitude):
+        assert 1 >= magnitude >= 0
+        self.magnitude = magnitude
+        self.range = [-magnitude*self.scale + self.bias,
+                       magnitude*self.scale + self.bias]
 
     def __call__(self, image):
-        pass
+        raise NotImplemented()
 
     def sample_magnitude(self):
         return torch.empty(1).uniform_(*self.range).item()
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}: [{self.range[0]}, {self.range[1]}]'
 
 
 transforms = BagOfOps()
@@ -64,38 +73,39 @@ class TranslateY(Operation):
 
 @transforms.register
 class Rotate(Operation):
+    scale = 180
+    bias = 0
+
     def __call__(self, image):
         return TF.rotate(image, self.sample_magnitude())
 
 
+'''
 @transforms.register
 class AutoContrast(Operation):
-    def __call__(self, image):
-        return image
+'''
 
 
 @transforms.register
 class Invert(Operation):
     def __call__(self, image):
-        return image
+        bound = 1.0 if image.is_floating_point() else 255.0
+        dtype = image.dtype if torch.is_floating_point(image) else torch.float32
+        return (bound - img.to(dtype)).to(img.dtype)
 
 
+'''
 @transforms.register
 class Equalize(Operation):
-    def __call__(self, image):
-        return image
 
 
 @transforms.register
 class Solarize(Operation):
-    def __call__(self, image):
-        return image
 
 
 @transforms.register
 class Posterize(Operation):
-    def __call__(self, image):
-        return image
+'''
 
 
 @transforms.register
@@ -104,34 +114,30 @@ class Contrast(Operation):
         return TF.adjust_contrast(image, self.sample_magnitude())
 
 
+'''
 @transforms.register
 class Color(Operation):
-    def __call__(self, image):
-        return image
+'''
 
 
 @transforms.register
 class Brightness(Operation):
     def __call__(self, image):
-        return image
+        return TF.adjust_brightness(image, self.sample_magnitude())
 
 
+'''
 @transforms.register
 class Sharpness(Operation):
-    def __call__(self, image):
-        return image
 
 
 @transforms.register
 class Cutout(Operation):
-    def __call__(self, image):
-        return image
 
 
 @transforms.register
 class SamplePairing(Operation):
-    def __call__(self, image):
-        return image
+'''
 
 
 if __name__ == '__main__':
@@ -139,5 +145,7 @@ if __name__ == '__main__':
     print(transforms.n_ops)
 
     x = torch.zeros((32, 32, 3))
-    x = Rotate(30)(x)
+    x = Rotate(30/180)(x)
+    print(Rotate(30/180))
+    print(transforms[0](0.1))
 
