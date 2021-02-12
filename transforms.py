@@ -43,6 +43,8 @@ transforms = BagOfOps()
 
 @transforms.register
 class ShearX(Operation):
+    scale = 180
+
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
                          shear=(self.sample_magnitude(), 0))
@@ -50,6 +52,8 @@ class ShearX(Operation):
 
 @transforms.register
 class ShearY(Operation):
+    scale = 180
+
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
                          shear=(0, self.sample_magnitude()))
@@ -74,7 +78,6 @@ class TranslateY(Operation):
 @transforms.register
 class Rotate(Operation):
     scale = 180
-    bias = 0
 
     def __call__(self, image):
         return TF.rotate(image, self.sample_magnitude())
@@ -89,27 +92,52 @@ class AutoContrast(Operation):
 @transforms.register
 class Invert(Operation):
     def __call__(self, image):
-        bound = 1.0 if image.is_floating_point() else 255.0
-        dtype = image.dtype if torch.is_floating_point(image) else torch.float32
-        return (bound - img.to(dtype)).to(img.dtype)
+        if image.max() > 1 or image.min() < 0:
+            raise ValueError('the value of image must lie between 0 and 1')
+
+        return 1 - image
 
 
-'''
 @transforms.register
 class Equalize(Operation):
+    # https://github.com/pytorch/vision/pull/3119/files
+    def __call__(self, image):
+        raise NotImplemented()
 
 
 @transforms.register
 class Solarize(Operation):
+    # https://github.com/pytorch/vision/pull/3112/files
+    def __call__(self, image):
+        # assume given image is floats and values are between 0 and 1
+        threshold = 1 - self.sample_magnitude().abs()
+        mask = (image > threshold).float()
+        image = mask * (1-image) + (1-mask) * image
+        return image
 
 
 @transforms.register
 class Posterize(Operation):
-'''
+    # https://github.com/pytorch/vision/pull/3108/files
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.bits = int(1 + 7*self.magnitude)
+
+    def __call__(self, image):
+        if image.max() > 1 or image.min() < 0:
+            raise ValueError('the value of image must lie between 0 and 1')
+
+        image = (image * 255).int()
+        mask = -int(2**(8 - bits))
+        image = image & mask
+        image = (image / 255.).float()
+        return image
 
 
 @transforms.register
 class Contrast(Operation):
+    bias = 1
     def __call__(self, image):
         return TF.adjust_contrast(image, self.sample_magnitude())
 
@@ -122,6 +150,7 @@ class Color(Operation):
 
 @transforms.register
 class Brightness(Operation):
+    bias = 1
     def __call__(self, image):
         return TF.adjust_brightness(image, self.sample_magnitude())
 
