@@ -83,10 +83,25 @@ class Rotate(Operation):
         return TF.rotate(image, self.sample_magnitude())
 
 
-'''
 @transforms.register
 class AutoContrast(Operation):
-'''
+    # https://github.com/pytorch/vision/pull/3117/files
+    def __call__(self, image):
+        if self.sample_magnitude() >= self.bias:
+            return self.autocontrast(image)
+        return image
+    
+    @staticmethod
+    def autocontrast(image):
+        bound = 1.
+        minimum = image.amin(dim=(-2, -1), keepdim=True)
+        maximum = image.amax(dim=(-2, -1), keepdim=True)
+        equal = torch.where(minimum == maximum)[0]
+        minimum[equal] = 0
+        maximum[equal] = bound
+        scale = bound / (maximum - minimum)
+
+        return ((image - minimum) * scale).clamp(0, bound)
 
 
 @transforms.register
@@ -104,6 +119,12 @@ class Invert(Operation):
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
     def __call__(self, image):
+        if self.sample_magnitude() >= self.bias:
+            return self.equalize(image)
+        return image
+
+    @staticmethod
+    def equalize(image):
         org_size = image.size()
         image = image.reshape(-1, *org_size[-2:])
         n_sample = image.size(0)
