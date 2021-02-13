@@ -1,5 +1,7 @@
 import torch
+import torchvision
 import torchvision.transforms.functional as TF
+
 
 # https://github.com/pytorch/vision/issues/3050
 # automatically registers operations (use @transforms.register)
@@ -186,10 +188,15 @@ class Contrast(Operation):
         return TF.adjust_contrast(image, self.sample_magnitude())
 
 
-'''
 @transforms.register
 class Color(Operation):
-'''
+    bias = 1
+    def __call__(self, image):
+        color_balance = self.sample_magnitude()
+        image = color_balance * image \
+                + (1-color_balance) * TF.rgb_to_grayscale(image, 3)
+        image = image.clamp(0., 1.)
+        return image
 
 
 @transforms.register
@@ -231,11 +238,25 @@ class Sharpness(Operation):
         return image
 
 
-'''
 @transforms.register
 class Cutout(Operation):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.random_erasing = torchvision.transforms.RandomErasing(
+            scale=(0, self.magnitude),
+            ratio=(0.3, 3.3))
+
+    def __call__(self, image):
+        return self.random_erasing(image)
 
 
+@transforms.register
+class Identity(Operation):
+    def __call__(self, image):
+        return image
+
+
+'''
 @transforms.register
 class SamplePairing(Operation):
 '''
@@ -246,10 +267,13 @@ if __name__ == '__main__':
     print(transforms.n_ops)
 
     x = torch.zeros((3, 32, 32))
+    xs = torch.zeros((8, 3, 32, 32))
     x = Rotate(30/180)(x)
     print(Rotate(30/180))
     print(transforms[0](0.1))
 
     for op in transforms.ops:
-        op(0.5)(x)
-
+        o = op(0.5)
+        print(o(x).size())
+        print(o(xs).size())
+        
