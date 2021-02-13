@@ -11,7 +11,7 @@ class Controller(nn.Module):
                  **kwargs):
         super(Controller, self).__init__(**kwargs)
         self.lstm = nn.LSTM(emb_size, hidden_size, batch_first=True)
-        self.softmax = nn.Linear(hidden_size, output_size)
+        self.linear = nn.Linear(hidden_size, output_size)
         self.embedding = nn.Embedding(output_size, emb_size)
         self.n_subpolicies = n_subpolicies
 
@@ -23,10 +23,11 @@ class Controller(nn.Module):
         for i in range(self.n_subpolicies * 4):
             x = self.embedding(x)
             x, hn_cn = self.lstm(x, hn_cn)
-            x = self.softmax(x)
+            x = self.linear(x) # last layer
+            x = x.softmax(-1)
 
             tokens.append(x)
-            x = x.softmax(-1).squeeze(1) # [1, 1, dim] to [1, dim]
+            x = x.squeeze(1) # [1, 1, dim] to [1, dim]
             x = torch.multinomial(x, 1)
             
         return torch.cat(tokens, axis=1)
