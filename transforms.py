@@ -45,7 +45,7 @@ transforms = BagOfOps()
 
 @transforms.register
 class ShearX(Operation):
-    scale = 180
+    scale = 90 # [-90, 90]
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -54,7 +54,7 @@ class ShearX(Operation):
 
 @transforms.register
 class ShearY(Operation):
-    scale = 180
+    scale = 90 # [-90, 90]
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -64,16 +64,18 @@ class ShearY(Operation):
 @transforms.register
 class TranslateX(Operation):
     def __call__(self, image):
+        x_trans = image.size(-1) // 2 # C, H, W
         return TF.affine(image, angle=0, 
-                         translate=(self.sample_magnitude(), 0), 
+                         translate=(x_trans*self.sample_magnitude(), 0), 
                          scale=1., shear=(0, 0))
 
 
 @transforms.register
 class TranslateY(Operation):
     def __call__(self, image):
+        y_trans = image.size(-2) // 2 # C, H, W
         return TF.affine(image, angle=0, 
-                         translate=(0, self.sample_magnitude()), 
+                         translate=(0, y_trans*self.sample_magnitude()), 
                          scale=1., shear=(0, 0))
 
 
@@ -131,7 +133,7 @@ class Equalize(Operation):
         image = image.reshape(-1, *org_size[-2:])
         n_sample = image.size(0)
 
-        image = (image * 255).int() # float to int
+        image = (image * 255).long() # float to int
 
         for i in range(n_sample):
             # scale channel
@@ -145,10 +147,11 @@ class Equalize(Operation):
                 lut = (torch.cumsum(hist, 0) + (step // 2)) // step
                 lut = torch.cat([torch.zeros(1, device=image.device), lut[:-1]])
                 lut = lut.clamp(0, 255)
-                image[i] = lut[sample.long()].int()
+                image[i] = lut[sample]
             
         image = (image / 255.).float() # int to float 
         image = image.reshape(*org_size)
+        image = image.clamp(0., 1.)
         return image
 
 
@@ -160,6 +163,7 @@ class Solarize(Operation):
         threshold = 1 - abs(self.sample_magnitude())
         mask = (image > threshold).float()
         image = mask * (1-image) + (1-mask) * image
+        image = image.clamp(0., 1.)
         return image
 
 
@@ -178,6 +182,7 @@ class Posterize(Operation):
         mask = -int(2**(8 - self.bits))
         image = image & mask
         image = (image / 255.).float()
+        image = image.clamp(0., 1.)
         return image
 
 
@@ -185,6 +190,9 @@ class Posterize(Operation):
 class Contrast(Operation):
     bias = 1
     def __call__(self, image):
+        if image.max() > 1 or image.min() < 0:
+            raise ValueError('the value of image must lie between 0 and 1')
+
         return TF.adjust_contrast(image, self.sample_magnitude())
 
 
@@ -244,7 +252,7 @@ class Cutout(Operation):
         super().__init__(*args, **kwargs)
         self.random_erasing = torchvision.transforms.RandomErasing(
             scale=(0, self.magnitude),
-            ratio=(0.3, 3.3))
+            ratio=(1, 1))
 
     def __call__(self, image):
         return self.random_erasing(image)
@@ -266,14 +274,17 @@ if __name__ == '__main__':
     print(transforms.ops)
     print(transforms.n_ops)
 
-    x = torch.zeros((3, 32, 32))
-    xs = torch.zeros((8, 3, 32, 32))
-    x = Rotate(30/180)(x)
-    print(Rotate(30/180))
-    print(transforms[0](0.1))
+    x = torch.rand((3, 32, 32))
+    xs = torch.rand((8, 3, 32, 32))
 
+    import time
     for op in transforms.ops:
-        o = op(0.5)
-        print(o(x).size())
-        print(o(xs).size())
-        
+        o = op(1)
+
+        start = time.time()
+        for i in range(1000):
+            assert(torch.isnan(o(x)).sum() == 0)
+            output = o(xs)
+            assert output.max() <= 1 and output.min() >= 0
+        print(o, f'{time.time()-start:.3f}')
+
