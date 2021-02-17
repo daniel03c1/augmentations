@@ -40,6 +40,7 @@ class AdvAutoaugTrainer:
             train_dataloader, val_dataloader=None, 
             n_epochs=200, scheduler=None):
         chan_axis = 1
+        '''
         M = 8
         
         # for intermediate outputs
@@ -49,8 +50,10 @@ class AdvAutoaugTrainer:
                 activation[name] = input # output
             return hook
         avg = self.model.fc.register_forward_hook(get_activation('avgpool'))
+        '''
 
         for epoch in range(n_epochs):
+            '''
             losses = torch.zeros(
                 (M-1,), dtype=torch.float, device=self.device)
             op_grads = torch.zeros(
@@ -60,6 +63,8 @@ class AdvAutoaugTrainer:
             prior_probs = policies
             policies = [self.decode_policy(policy) for policy in policies]
             print(self.op_visit_count)
+            '''
+            self.model.train()
 
             total_loss = 0
             total_acc = 0
@@ -71,8 +76,10 @@ class AdvAutoaugTrainer:
                 ys = ys.to(self.device)
                 batch_size = xs.size(0)
                 
+                '''
                 xs = torch.cat([policy(xs) for policy in policies]+[xs], dim=0)
                 ys = ys.repeat(M)
+                '''
 
                 self.optimizer.zero_grad()
 
@@ -80,11 +87,12 @@ class AdvAutoaugTrainer:
                 with torch.set_grad_enabled(True):
                     ys_hat = self.model(xs)
                     loss = self.criterion(ys_hat, ys)
-                    assert ys_hat.max() < 1000.
+                    assert ys_hat.max() < 10000.
 
                     loss.mean().backward()
                     self.optimizer.step()
 
+                '''
                 # gradients & losses for RL
                 inter = activation['avgpool'][0] # .squeeze()
                 grads = torch.autograd.grad(
@@ -101,6 +109,7 @@ class AdvAutoaugTrainer:
 
                 loss = loss.detach()
                 losses = 0.95*losses + 0.05*loss.reshape(M, -1).mean(1)[:-1]
+                '''
 
                 # metrics
                 pred_cls = torch.argmax(ys_hat, -1)
@@ -110,17 +119,18 @@ class AdvAutoaugTrainer:
 
             # verbose
             current_lr = self.optimizer.state_dict()['param_groups'][0]['lr']
-            print(f'{epoch}({time.time()-start:.3f})-{current_lr:.6f} '
-                  f'loss: {(total_loss/count).item()} '
-                  f'acc: {(total_acc/count).item()}')
+            print(f'{epoch}({time.time()-start:.3f})-lr:{current_lr:.6f} '
+                  f'loss: {(total_loss/count).item():.5f} '
+                  f'acc: {(total_acc/count).item():.5f}')
             if val_dataloader is not None:
                 val_loss, val_acc = self.eval(val_dataloader)
-                print(f'validation | loss: {val_loss.item()}, '
-                      f'acc: {val_acc.item()}')
+                print(f'validation | loss: {val_loss.item():.5f}, '
+                        f'acc: {val_acc.item():.5f}')
 
             if scheduler:
                 scheduler.step()
 
+        '''
             # calculate rewards
             # rewards = (losses - losses.mean()) / (losses.std() + 1e-8) 
             # rewards = calculate_rewards(losses, op_grads)
@@ -139,6 +149,7 @@ class AdvAutoaugTrainer:
             print(rewards)
 
         avg.remove() # detach hook
+        '''
 
     def eval(self, dataloader):
         self.model.eval()
@@ -204,21 +215,37 @@ def calculate_rewards(losses, grad_diffs):
     return rewards
 
 
+def aug_policies(states, prior_probs, rewards, next_states):
+    prior_probs = prior_probs * 1 # copy original prior_probs
+    n_subpolicies = prior_probs.size(-2) // 4
+
+    for i in range(states.size(0)):
+        new_probs = prior_probs[i].view(n_subpolicies, 4, -1)
+        new_probs = new_probs[torch.randperm(5)]
+        prior_probs[i] = new_probs.view(n_subpolicies*4, -1)
+
+    return states, prior_probs, rewards, next_states
+
+
 if __name__ == '__main__':
     import torch.nn as nn
     from torch import optim
+
+    from agents import PPOAgent
     from dataloader import EfficientCIFAR10
     from models import Controller
     from transforms import transforms as bag_of_ops
     from wide_resnet import WideResNet
-    from agents import PPOAgent
 
     # transforms
     data_transforms = {
         'train': transforms.Compose([
             transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, padding=4),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
         'val': transforms.Compose([
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
     }
 
@@ -236,28 +263,17 @@ if __name__ == '__main__':
             num_workers=12)
 
     # model
-    model = torchvision.models.resnet18(pretrained=False)
-    model.fc = nn.Linear(model.fc.in_features, 10)
-    # model = WideResNet(28, 10, 0.3, num_classes=10)
+    model = WideResNet(28, 10, 0.3, num_classes=10)
 
     criterion = nn.CrossEntropyLoss(reduction='none')
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9,
+                          nesterov=True,
                           weight_decay=5e-4)
 
     # RL
     c = Controller(output_size=bag_of_ops.n_ops)
     c_optimizer = optim.Adam(c.parameters(), lr=0.00035)
-    def c_aug(states, prior_probs, rewards, next_states):
-        prior_probs = prior_probs * 1 # copy original prior_probs
-        n_subpolicies = prior_probs.size(-2) // 4
-
-        for i in range(states.size(0)):
-            new_probs = prior_probs[i].view(n_subpolicies, 4, -1)
-            new_probs = new_probs[torch.randperm(5)]
-            prior_probs[i] = new_probs.view(n_subpolicies*4, -1)
-
-        return states, prior_probs, rewards, next_states
-    ppo = PPOAgent(c, batch_size=7, augmentation=c_aug)
+    ppo = PPOAgent(c, name='ppo.pt', batch_size=7, augmentation=aug_policies)
 
     trainer = AdvAutoaugTrainer(model=model,
                                 optimizer=optimizer,
