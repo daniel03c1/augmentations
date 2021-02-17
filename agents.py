@@ -28,6 +28,7 @@ class PPOAgent:
         self.augmentation = augmentation
 
     def act(self, states):
+        self.net.eval()
         return self.net(states.to(self.device))
 
     def cache(self, state, prob, reward, next_state):
@@ -41,6 +42,7 @@ class PPOAgent:
             self.cache(states[i], probs[i], rewards[i], next_states[i])
 
     def learn(self, n_steps=1):
+        self.net.train()
         for i in range(n_steps):
             # inputs
             states, prior_probs, rewards, next_states = self.recall()

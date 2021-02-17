@@ -19,7 +19,7 @@ class AgentsTest(unittest.TestCase):
         self.next_states = torch.rand((datasize, input_feat))
 
     def test_ppo_agent(self):
-        ppo = PPOAgent(self.net)
+        ppo = PPOAgent(self.net, 'agents_test_ppo.pt')
         probs = ppo.act(self.states)
         ppo.cache_batch(self.states, probs, self.rewards, self.next_states)
         states, probs, rewards, new_states = ppo.recall()
