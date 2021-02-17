@@ -10,6 +10,7 @@ from utils import get_default_device
 class PPOAgent:
     def __init__(self, 
                  net: nn.Module, 
+                 name: str,
                  lr=0.00035,
                  batch_size=1, 
                  epsilon=0.2,
@@ -17,6 +18,7 @@ class PPOAgent:
                  augmentation=None):
         self.device = get_default_device()
         self.net = net.to(self.device)
+        self.name = name
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
         self.memory = deque(maxlen=1024)
@@ -74,5 +76,5 @@ class PPOAgent:
         self.memory.clear()
 
     def save(self):
-        raise NotImplemented()
+        torch.save(self.net.state_dict(), self.name)
 
