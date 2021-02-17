@@ -38,12 +38,7 @@ class PPOAgent:
         for i in range(states.size(0)):
             self.cache(states[i], probs[i], rewards[i], next_states[i])
 
-    def recall(self):
-        batch = random.sample(self.memory, self.batch_size)
-        states, probs, rewards, next_states = map(torch.stack, zip(*batch))
-        return states, probs, rewards, next_states
-
-    def learn(self, n_steps):
+    def learn(self, n_steps=1):
         for i in range(n_steps):
             # inputs
             states, prior_probs, rewards, next_states = self.recall()
@@ -52,9 +47,9 @@ class PPOAgent:
                     states, prior_probs, rewards, next_states)
             prior_log_probs = prior_probs.detach().log()
 
+            # train
             self.optimizer.zero_grad()
 
-            print(states.size())
             probs = self.net(states)
             ratios = torch.exp(probs.log() - prior_log_probs)
 
@@ -70,24 +65,14 @@ class PPOAgent:
         if self.online:
             self.clear_memory()
 
-    def save(self):
-        raise NotImplemented()
+    def recall(self):
+        batch = random.sample(self.memory, self.batch_size)
+        states, probs, rewards, next_states = map(torch.stack, zip(*batch))
+        return states, probs, rewards, next_states
 
     def clear_memory(self):
         self.memory.clear()
 
-
-if __name__ == '__main__':
-    from models import Controller
-
-    net = Controller()
-    ppo = PPOAgent(net=net)
-    states = torch.zeros((8, 1), dtype=torch.long)
-    probs = ppo.act(states)
-    rewards = torch.rand(probs.size())
-    new_states = states
-    ppo.cache_batch(states, probs, rewards, new_states)
-    states, probs, rewards, new_states = ppo.recall()
-    ppo.learn(1)
-    ppo.clear_memory()
+    def save(self):
+        raise NotImplemented()
 
