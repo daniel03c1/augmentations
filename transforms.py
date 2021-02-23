@@ -45,7 +45,7 @@ transforms = BagOfOps()
 
 @transforms.register
 class ShearX(Operation):
-    scale = 90 # [-90, 90]
+    scale = 45 # 90 # [-90, 90]
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -54,7 +54,7 @@ class ShearX(Operation):
 
 @transforms.register
 class ShearY(Operation):
-    scale = 90 # [-90, 90]
+    scale = 45 # 90 # [-90, 90]
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -81,7 +81,7 @@ class TranslateY(Operation):
 
 @transforms.register
 class Rotate(Operation):
-    scale = 180
+    scale = 30 # 180
 
     def __call__(self, image):
         return TF.rotate(image, self.sample_magnitude())
@@ -119,6 +119,7 @@ class Invert(Operation):
         return image
 
 
+'''
 @transforms.register
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
@@ -153,6 +154,7 @@ class Equalize(Operation):
         image = image.reshape(*org_size)
         image = image.clamp(0., 1.)
         return image
+'''
 
 
 @transforms.register
@@ -172,7 +174,7 @@ class Posterize(Operation):
     # https://github.com/pytorch/vision/pull/3108/files
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.bits = int(1 + 7*self.magnitude)
+        self.bits = int(8 - 7*self.magnitude)
 
     def __call__(self, image):
         if image.max() > 1 or image.min() < 0:
@@ -188,6 +190,7 @@ class Posterize(Operation):
 
 @transforms.register
 class Contrast(Operation):
+    scale = 0.9
     bias = 1
     def __call__(self, image):
         if image.max() > 1 or image.min() < 0:
@@ -198,6 +201,7 @@ class Contrast(Operation):
 
 @transforms.register
 class Color(Operation):
+    scale = 0.9
     bias = 1
     def __call__(self, image):
         color_balance = self.sample_magnitude()
@@ -209,6 +213,7 @@ class Color(Operation):
 
 @transforms.register
 class Brightness(Operation):
+    scale = 0.9
     bias = 1
     def __call__(self, image):
         return TF.adjust_brightness(image, self.sample_magnitude())
@@ -217,6 +222,7 @@ class Brightness(Operation):
 @transforms.register
 class Sharpness(Operation):
     # https://github.com/pytorch/vision/pull/3114/files
+    scale = 0.9
     bias = 1
 
     def __call__(self, image):
@@ -264,10 +270,17 @@ class Identity(Operation):
         return image
 
 
-'''
 @transforms.register
 class SamplePairing(Operation):
-'''
+    scale = 0.4
+
+    def __call__(self, image):
+        if image.ndim == 3: # single image:
+            return image
+
+        idx = torch.randperm(image.size(0))
+        mag = abs(self.sample_magnitude())
+        return mag * image[idx] + (1-mag) * image
 
 
 if __name__ == '__main__':
