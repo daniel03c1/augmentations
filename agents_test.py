@@ -3,26 +3,26 @@ import os
 import torch
 import unittest
 from agents import *
+from models import PolicyController
 
 
 class AgentsTest(unittest.TestCase):
     def setUp(self):
-        datasize, input_feat = 32, 2
-        output_feat = 1
+        class BOO: n_ops = 11 # temp class
 
-        self.net = nn.Sequential(
-            nn.Linear(input_feat, 5),
-            nn.ReLU(),
-            nn.Linear(5, output_feat))
-        self.states = torch.rand((datasize, input_feat))
-        self.rewards = torch.rand((datasize,))
-        self.next_states = torch.rand((datasize, input_feat))
+        self.bag_of_ops = BOO()
+        self.net = PolicyController(self.bag_of_ops)
+        datasize, input_feat = 32, 2
+
+        self.states = torch.zeros(datasize)
+        self.rewards = torch.zeros(datasize)
+        self.next_states = torch.zeros(datasize)
 
     def test_ppo_agent(self):
         ppo = PPOAgent(self.net, 'agents_test_ppo.pt')
-        probs = ppo.act(self.states)
-        ppo.cache_batch(self.states, probs, self.rewards, self.next_states)
-        states, probs, rewards, new_states = ppo.recall()
+        actions, dists = ppo.act(self.states)
+        ppo.cache_batch(self.states, actions, dists, self.rewards, self.next_states)
+        states, actions, dists, rewards, new_states = ppo.recall()
         ppo.learn(10)
         ppo.clear_memory()
 

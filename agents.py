@@ -12,18 +12,26 @@ class PPOAgent:
                  net: nn.Module, 
                  name: str,
                  lr=0.00035,
+                 grad_norm=0.5,
                  batch_size=1, 
                  epsilon=0.2,
+                 ent_coef=1e-5,
                  online=True,
-                 augmentation=None):
-        self.device = get_default_device()
+                 augmentation=None,
+                 device=None):
+        if device:
+            self.device = device
+        else:
+            self.device = get_default_device()
         self.net = net.to(self.device)
         self.name = name
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
+        self.grad_norm = grad_norm
 
-        self.memory = deque(maxlen=1024)
+        self.memory = deque(maxlen=256)
         self.batch_size = batch_size
         self.epsilon = epsilon
+        self.ent_coef = ent_coef
         self.online = online
         self.augmentation = augmentation
 
@@ -31,39 +39,44 @@ class PPOAgent:
         self.net.eval()
         return self.net(states.to(self.device))
 
-    def cache(self, state, prob, reward, next_state):
+    def cache(self, state, action, dist, reward, next_state):
         self.memory.append((state.to(self.device), 
-                            prob.to(self.device), 
+                            action.to(self.device).detach(),
+                            dist.to(self.device).detach(), 
                             reward.to(self.device), 
                             next_state.to(self.device)))
 
-    def cache_batch(self, states, probs, rewards, next_states):
+    def cache_batch(self, states, actions, dists, rewards, next_states):
         for i in range(states.size(0)):
-            self.cache(states[i], probs[i], rewards[i], next_states[i])
+            self.cache(states[i], actions[i], dists[i], rewards[i], next_states[i])
 
     def learn(self, n_steps=1):
         self.net.train()
+
         for i in range(n_steps):
             # inputs
-            states, prior_probs, rewards, next_states = self.recall()
+            memory = self.recall()
             if self.augmentation:
-                states, prior_probs, rewards, next_states = self.augmentation(
-                    states, prior_probs, rewards, next_states)
-            prior_log_probs = prior_probs.detach().log()
+                memory = self.augmentation(*memory)
+            states, actions, dists, rewards, next_states = memory
 
             # train
             self.optimizer.zero_grad()
 
-            probs = self.net(states)
-            ratios = torch.exp(probs.log() - prior_log_probs)
+            _, new_dists = self.net(states)
+            # TODO: precalculate log_probs of dists
+            ratios = torch.exp(
+                self.net.calculate_log_probs(actions, new_dists)
+                - self.net.calculate_log_probs(actions, dists).detach())
 
             loss = -torch.min(
                 ratios*rewards,
                 torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon)*rewards)
-            # entropy loss
-            loss += 1e-5 * (probs * probs.log()).sum(-1).mean()
+            assert torch.isnan(loss).sum() == 0
+            loss = self.ent_coef * self.net.calculate_entropy(new_dists)
 
-            torch.mean(loss).backward()
+            torch.mean(loss).backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_norm)
             self.optimizer.step()
 
         if self.online:
@@ -71,12 +84,20 @@ class PPOAgent:
 
     def recall(self):
         batch = random.sample(self.memory, self.batch_size)
-        states, probs, rewards, next_states = map(torch.stack, zip(*batch))
-        return states, probs, rewards, next_states
+        states, actions, dists, rewards, next_states = map(
+            torch.stack, zip(*batch))
+        return states, actions, dists, rewards, next_states
 
     def clear_memory(self):
         self.memory.clear()
 
-    def save(self):
-        torch.save(self.net.state_dict(), self.name)
+    def save(self, name=None):
+        if not name:
+            name = self.name
+        if not name.endswith('.pt'):
+            name += '.pt'
+        torch.save(self.net.state_dict(), name)
+
+    def decode_policy(self, *args, **kwargs):
+        return self.net.decode_policy(*args, **kwargs)
 
