@@ -48,7 +48,8 @@ class PPOAgent:
 
     def cache_batch(self, states, actions, dists, rewards, next_states):
         for i in range(states.size(0)):
-            self.cache(states[i], actions[i], dists[i], rewards[i], next_states[i])
+            self.cache(states[i], actions[i], dists[i], rewards[i], 
+                       next_states[i])
 
     def learn(self, n_steps=1):
         self.net.train()
@@ -60,10 +61,10 @@ class PPOAgent:
                 memory = self.augmentation(*memory)
             states, actions, dists, rewards, next_states = memory
 
-            # train
             self.optimizer.zero_grad()
 
             _, new_dists = self.net(states)
+            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
             # TODO: precalculate log_probs of dists
             ratios = torch.exp(
                 self.net.calculate_log_probs(actions, new_dists)
@@ -72,15 +73,17 @@ class PPOAgent:
             loss = -torch.min(
                 ratios*rewards,
                 torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon)*rewards)
-            assert torch.isnan(loss).sum() == 0
-            loss = self.ent_coef * self.net.calculate_entropy(new_dists)
+            loss += self.ent_coef * self.net.calculate_entropy(new_dists)
 
             torch.mean(loss).backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 
+                                           self.grad_norm)
             self.optimizer.step()
 
         if self.online:
             self.clear_memory()
+
+        return loss # the last loss
 
     def recall(self):
         batch = random.sample(self.memory, self.batch_size)
