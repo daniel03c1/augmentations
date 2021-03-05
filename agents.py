@@ -73,7 +73,7 @@ class PPOAgent:
             loss = -torch.min(
                 ratios*rewards,
                 torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon)*rewards)
-            loss += self.ent_coef * self.net.calculate_entropy(new_dists)
+            loss -= self.ent_coef * self.net.calculate_entropy(new_dists)
 
             torch.mean(loss).backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 
