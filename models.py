@@ -173,7 +173,7 @@ class PolicyController(nn.Module):
         rest = actions_dist[:, 2:] 
 
         std_ent = 0.5 + 0.5 * math.log(2 * math.pi) + std.log()
-        rest_ent = (rest*rest.log()).sum(-1) # [n_samples, op_layers*2]
+        rest_ent = -(rest*rest.log()).sum(-1) # [n_samples, op_layers*2]
         
         return torch.cat([std_ent, rest_ent], 1).mean()
 
@@ -280,7 +280,7 @@ class SGC(nn.Module):
         mag_ent = 0.5 + 0.5 * math.log(2*math.pi) + mag_std.log()
         prob_ent = 0.5 + 0.5 * math.log(2*math.pi) + prob_std.log()
         dist_ent = prob_mean.softmax(-1)
-        dist_ent = (dist_ent*dist_ent.log())
+        dist_ent = -(dist_ent*dist_ent.log())
 
         return mag_ent.mean() + prob_ent.mean() + dist_ent.mean()
 
