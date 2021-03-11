@@ -2,6 +2,7 @@ import copy
 import time
 import torch
 import torchvision
+import torch.nn.functional as F
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
@@ -117,11 +118,14 @@ class AdvAutoaugTrainer:
                     base_grads = grads[batch_size:]
                     grads = grads[:batch_size:org_step]
 
+                    '''
                     base_norm = base_grads.square().sum(-1).sqrt()
                     grads_norm = (grads - base_grads).square() \
                                  .sum(-1).sqrt()
                     grads_norm /= torch.maximum(
                         base_norm, torch.zeros_like(base_norm)+1e-8)
+                    '''
+                    grads_norm = F.cosine_similarity(base_grads, grads, dim=1)
                     grads_norm = grads_norm.reshape(self.M, -1).mean(1)
 
                     dists = 0.9 * dists + 0.1 * grads_norm
@@ -165,10 +169,11 @@ class AdvAutoaugTrainer:
                 self.writer.add_histogram('dists', dists, epoch)
 
                 # normalize
+                # dists: cos sim
                 losses = (losses - losses.mean()) / (losses.std() + 1e-8)
                 dists = (dists - dists.mean()) / (dists.std() + 1e-8)
 
-                rewards = losses - dists
+                rewards = -losses + 0.5 * dists
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
