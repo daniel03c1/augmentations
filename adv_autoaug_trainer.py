@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import get_default_device
 
 
-class AdvAutoaugTrainer:
+class Trainer:
     def __init__(self, 
                  model: torch.nn.Module, 
                  optimizer, 

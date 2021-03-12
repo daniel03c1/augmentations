@@ -6,7 +6,7 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.optim import lr_scheduler
 
-from adv_autoaug_trainer import AdvAutoaugTrainer
+from adv_autoaug_trainer import Trainer
 from agents import PPOAgent
 from agents_aug import newSGC_aug
 from augments import RandAugment
@@ -69,15 +69,15 @@ def main(config, **kwargs):
                    augmentation=None, # newSGC_aug,
                    device=torch.device('cpu'))
 
-    trainer = AdvAutoaugTrainer(model=model,
-                                optimizer=optimizer,
-                                criterion=criterion,
-                                name=config.name,
-                                bag_of_ops=bag_of_ops,
-                                rl_n_steps=12, 
-                                M=config.M, 
-                                normalize=normalize,
-                                rl_agent=ppo)
+    trainer = Trainer(model=model,
+                      optimizer=optimizer,
+                      criterion=criterion,
+                      name=config.name,
+                      bag_of_ops=bag_of_ops,
+                      rl_n_steps=12, 
+                      M=config.M, 
+                      normalize=normalize,
+                      rl_agent=ppo)
 
     print(bag_of_ops.ops)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
