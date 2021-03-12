@@ -2,10 +2,10 @@ import numpy as np
 import os
 import unittest
 from torch import optim
-from models import *
+from controllers import *
 
 
-class ModelsTest(unittest.TestCase):
+class ControllersTest(unittest.TestCase):
     def test_controller(self):
         output_size = 10
         n_subpolicies = 5

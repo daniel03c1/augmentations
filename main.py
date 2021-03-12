@@ -11,7 +11,7 @@ from agents import PPOAgent
 from agents_aug import newSGC_aug
 from augments import RandAugment
 from dataloader import *
-from models import *
+from controllers import *
 from transforms import transforms as bag_of_ops
 from wideresnet import WideResNet
 
