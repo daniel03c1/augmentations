@@ -10,7 +10,7 @@ from adv_autoaug_trainer import AdvAutoaugTrainer
 from agents import PPOAgent
 from agents_aug import newSGC_aug
 from augments import RandAugment
-from dataloader import EfficientCIFAR10
+from dataloader import *
 from models import *
 from transforms import transforms as bag_of_ops
 from wideresnet import WideResNet
@@ -23,19 +23,24 @@ def main(config, **kwargs):
         'train': transforms.Compose([
             transforms.RandomCrop(32, padding=4), 
             transforms.RandomHorizontalFlip(),
-            # RandAugment(bag_of_ops, 2, 14/30),
-            # transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
         ]),
         'val': transforms.Compose([]),
     }
 
     # datasets & dataloaders
+    if config.dataset == 'cifar10':
+        dataset = EfficientCIFAR10
+    elif config.dataset == 'cifar100':
+        dataset = EfficientCIFAR100
+    else:
+        raise ValueError('invalid dataset')
+
     dataloaders = {}
     PATH = '/datasets/datasets/cifar'
     for mode in ['train', 'val']:
-        dataloaders[mode] = EfficientCIFAR10(PATH,
-                                             train=mode == 'train',
-                                             transform=data_transforms[mode])
+        dataloaders[mode] = dataset(PATH,
+                                    train=mode == 'train',
+                                    transform=data_transforms[mode])
         dataloaders[mode] = torch.utils.data.DataLoader(
             dataloaders[mode],
             batch_size=128,
@@ -61,7 +66,6 @@ def main(config, **kwargs):
     ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
                    grad_norm=0.01,
                    batch_size=config.M, 
-                   # ent_coef=1e-4, 
                    augmentation=None, # newSGC_aug,
                    device=torch.device('cpu'))
 
@@ -71,7 +75,7 @@ def main(config, **kwargs):
                                 name=config.name,
                                 bag_of_ops=bag_of_ops,
                                 rl_n_steps=12, 
-                                M=M, 
+                                M=config.M, 
                                 normalize=normalize,
                                 rl_agent=ppo)
 
@@ -92,6 +96,7 @@ if __name__ == '__main__':
     args.add_argument('--name', type=str, required=True)
     args.add_argument('--epochs', type=int, default=200)
     args.add_argument('--M', type=int, default=8)
+    args.add_argument('--dataset', type=str, default='cifar10')
     config = args.parse_args()
 
     main(config)
