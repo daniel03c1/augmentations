@@ -111,24 +111,25 @@ class AdvAutoaugTrainer:
                     # gradients & losses for RL
                     inter = activation['avgpool'][0]
                     # grads: [batch, hidden_dim]
+                    '''
                     grads = torch.autograd.grad(
                         self.criterion(self.model.fc(inter), ys).mean(),
                         inter)[0].detach()
+                    '''
+                    grads = inter.detach()
 
                     base_grads = grads[batch_size:]
                     grads = grads[:batch_size:org_step]
 
-                    '''
                     base_norm = base_grads.square().sum(-1).sqrt()
                     grads_norm = (grads - base_grads).square() \
                                  .sum(-1).sqrt()
                     grads_norm /= torch.maximum(
                         base_norm, torch.zeros_like(base_norm)+1e-8)
-                    '''
-                    grads_norm = F.cosine_similarity(base_grads, grads, dim=1)
-                    grads_norm = grads_norm.reshape(self.M, -1).mean(1)
+                    # grads_norm = F.cosine_similarity(base_grads, grads, dim=1)
 
-                    dists = 0.9 * dists + 0.1 * grads_norm
+                    grads_norm = grads_norm.reshape(self.M, -1).mean(1)
+                    dists = 0.95 * dists + 0.05 * grads_norm
 
                     # original losses
                     loss = loss.detach()
@@ -173,7 +174,7 @@ class AdvAutoaugTrainer:
                 losses = (losses - losses.mean()) / (losses.std() + 1e-8)
                 dists = (dists - dists.mean()) / (dists.std() + 1e-8)
 
-                rewards = -losses + 0.5 * dists
+                rewards = -losses - 0.5*dists # + for cos sim
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
