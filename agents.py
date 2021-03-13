@@ -35,9 +35,9 @@ class PPOAgent:
         self.online = online
         self.augmentation = augmentation
 
-    def act(self, states):
+    def act(self, *args, **kwargs):
         self.net.eval()
-        return self.net(states.to(self.device))
+        return self.net(*args, **kwargs)
 
     def cache(self, state, action, dist, reward, next_state):
         self.memory.append((state.to(self.device), 
@@ -66,9 +66,9 @@ class PPOAgent:
             _, new_dists = self.net(states)
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
             # TODO: precalculate log_probs of dists
-            ratios = torch.exp(
-                self.net.calculate_log_probs(actions, new_dists)
-                - self.net.calculate_log_probs(actions, dists).detach())
+            ratios = self.net.calculate_log_probs(actions, new_dists) \
+                   - self.net.calculate_log_probs(actions, dists).detach()
+            ratios = torch.exp(torch.clamp(ratios, -5, 5)) # for stability
 
             loss = -torch.min(
                 ratios*rewards,

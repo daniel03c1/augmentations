@@ -61,7 +61,8 @@ class Trainer:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
-                actions, dist = self.rl_agent.act(states)
+                rand_prob = max(0, 0.5 - epoch / 50)
+                actions, dist = self.rl_agent.act(states, rand_prob)
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
 
@@ -174,7 +175,7 @@ class Trainer:
                 losses = (losses - losses.mean()) / (losses.std() + 1e-8)
                 dists = (dists - dists.mean()) / (dists.std() + 1e-8)
 
-                rewards = -losses - 0.5*dists # + for cos sim
+                rewards = -losses - dists # + for cos sim
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training

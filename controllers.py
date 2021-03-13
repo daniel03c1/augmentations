@@ -9,7 +9,9 @@ class SGC(nn.Module):
     def __init__(self, 
                  bag_of_ops, 
                  op_layers=4, 
-                 n_layers=2, h_dim=64, **kwargs):
+                 n_layers=2, 
+                 h_dim=64, 
+                 **kwargs):
         super(SGC, self).__init__(**kwargs)
         self.bag_of_ops = bag_of_ops
         self.n_ops = bag_of_ops.n_ops
@@ -43,12 +45,15 @@ class SGC(nn.Module):
         self.prob_mean = nn.Linear(h_dim, self.n_ops) # for mag
         self.prob_std = nn.Linear(h_dim, self.n_ops) # for dist
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, rand_prob=0.):
+        n_samples = x.size(0)
+
         probs = self.input
         probs += self.type_emb(self.type_emb_indices)
         probs += self.order_emb(self.order_emb_indices)
 
         probs = self.encoder(probs)
+        probs = probs.repeat(n_samples, 1, 1)
 
         # action dist
         mag_mean = self.mag_mean(probs[:, :2*self.op_layers]).sigmoid()
@@ -59,16 +64,19 @@ class SGC(nn.Module):
         prob_std = self.prob_std(probs[:, -self.op_layers:]).sigmoid()
 
         action_dist = torch.cat([mag_mean, mag_std, prob_mean, prob_std], 1)
+        
+        # random actions
+        rand_action = torch.rand(action_dist.size())
+        is_random = torch.randint(2, (n_samples, 1, 1))
+        action_dist = (1-is_random)*action_dist + is_random*rand_action
 
         # actions
-        n_samples = x.size(0)
         mag = mag_mean \
             + mag_std / 2 * torch.randn((n_samples, *mag_std.size()[1:]))
         prob = prob_mean \
              + prob_std / 2 * torch.randn((n_samples, *prob_std.size()[1:]))
 
         actions = torch.cat([mag, prob], 1)
-        action_dist = action_dist.repeat(n_samples, 1, 1)
 
         return actions, action_dist
 
@@ -155,7 +163,7 @@ if __name__ == '__main__':
     print(sum([p.numel() for p in brain.parameters()]))
 
     x = torch.zeros(2)
-    action, prob = brain(x)
+    action, prob = brain(x, rand_prob=0.5)
     log_prob = brain.calculate_log_probs(action, prob)
     entropy = brain.calculate_entropy(prob)
 
