@@ -6,12 +6,12 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.optim import lr_scheduler
 
-from adv_autoaug_trainer import Trainer
 from agents import PPOAgent
 from agents_aug import newSGC_aug
 from augments import RandAugment
-from dataloader import *
 from controllers import *
+from dataloader import *
+from trainers import Trainer
 from transforms import transforms as bag_of_ops
 from wideresnet import WideResNet
 
@@ -61,7 +61,7 @@ def main(config, **kwargs):
         [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
 
     # RL
-    c = SGC(bag_of_ops, op_layers=2)
+    c = SGC(bag_of_ops, op_layers=2, temperature=0.5)
     c_optimizer = optim.Adam(c.parameters(), lr=0.035)
     ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
                    grad_norm=0.01,
