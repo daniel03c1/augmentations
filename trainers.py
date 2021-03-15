@@ -47,14 +47,6 @@ class Trainer:
             n_epochs=200, scheduler=None):
         chan_axis = 1
 
-        # for intermediate outputs
-        activation = {}
-        def get_activation(name):
-            def hook(model, input, output):
-                activation[name] = input # output
-            return hook
-        hook = self.model.fc.register_forward_hook(get_activation('avgpool'))
-
         for epoch in range(n_epochs):
             # for RL
             if self.rl_agent:
@@ -65,10 +57,6 @@ class Trainer:
                 actions, dist = self.rl_agent.act(states, rand_prob)
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
-
-                # for intermediate outputs
-                dists = torch.zeros(
-                    (self.M,), dtype=torch.float, device=self.device)
 
             self.model.train()
 
@@ -91,10 +79,8 @@ class Trainer:
 
                     xs = torch.cat(
                         [policy(xs[i*mini_size:(i+1)*mini_size]) 
-                            for i, policy in enumerate(policies)] + [org_xs],
+                            for i, policy in enumerate(policies)],
                         dim=0)
-                    ys = torch.cat([ys, ys[::org_step]], dim=0)
-                    # xs = self.random_erasing(xs)
 
                 if self.normalize:
                     xs = self.normalize(xs)
@@ -109,29 +95,6 @@ class Trainer:
                     self.optimizer.step()
 
                 if self.rl_agent:
-                    # gradients & losses for RL
-                    inter = activation['avgpool'][0]
-                    # grads: [batch, hidden_dim]
-                    '''
-                    grads = torch.autograd.grad(
-                        self.criterion(self.model.fc(inter), ys).mean(),
-                        inter)[0].detach()
-                    '''
-                    grads = inter.detach()
-
-                    base_grads = grads[batch_size:]
-                    grads = grads[:batch_size:org_step]
-
-                    base_norm = base_grads.square().sum(-1).sqrt()
-                    grads_norm = (grads - base_grads).square() \
-                                 .sum(-1).sqrt()
-                    grads_norm /= torch.maximum(
-                        base_norm, torch.zeros_like(base_norm)+1e-8)
-                    # grads_norm = F.cosine_similarity(base_grads, grads, dim=1)
-
-                    grads_norm = grads_norm.reshape(self.M, -1).mean(1)
-                    dists = 0.95 * dists + 0.05 * grads_norm
-
                     # original losses
                     loss = loss.detach()
                     losses = 0.95 * losses \
@@ -168,14 +131,7 @@ class Trainer:
 
             if self.rl_agent:
                 self.writer.add_histogram('losses', losses, epoch)
-                self.writer.add_histogram('dists', dists, epoch)
-
-                # normalize
-                # dists: cos sim
-                losses = (losses - losses.mean()) / (losses.std() + 1e-8)
-                dists = (dists - dists.mean()) / (dists.std() + 1e-8)
-
-                rewards = -losses - dists # + for cos sim
+                rewards = -losses
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
@@ -189,11 +145,6 @@ class Trainer:
                 _, output = self.rl_agent.act(torch.zeros(1))
                 print(output[0])
                 self.writer.add_image('output', output, epoch)
-
-            if epoch+1 in [60, 120, 160]:
-                self.save(f'{self.name}_{epoch+1}')
-                if self.rl_agent:
-                    self.rl_agent.save(f'{self.name}_A_{epoch+1}')
 
         self.writer.add_hparams(
             {'hp/M': self.M, 'hp/rl_n_steps': self.rl_n_steps},
