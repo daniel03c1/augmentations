@@ -44,7 +44,7 @@ class Operation:
         magnitude = random.uniform(min(self.magnitude),
                                    max(self.magnitude))
         if simple:
-            return magnitude
+            return magnitude*self.scale + self.bias
         return random.choice([-magnitude*self.scale + self.bias,
                                magnitude*self.scale + self.bias])
 
@@ -54,7 +54,7 @@ transforms = BagOfOps()
 
 @transforms.register
 class ShearX(Operation):
-    scale = 1. # 0.3 # max(Y/X) = 0.3
+    scale = 0.3 # 1. # max(Y/X) = 0.3
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -69,7 +69,7 @@ class ShearX(Operation):
 
 @transforms.register
 class ShearY(Operation):
-    scale = 1. # 0.3 # max(Y/X) = 0.3
+    scale = 0.3 # 1. # max(Y/X) = 0.3
 
     def __call__(self, image):
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
@@ -84,7 +84,7 @@ class ShearY(Operation):
 
 @transforms.register
 class TranslateX(Operation):
-    scale = 0.5 # 0.33
+    scale = 0.33 # 5 # 0.33
 
     def __call__(self, image):
         x_trans = image.size(-1) # C, H, W
@@ -95,7 +95,7 @@ class TranslateX(Operation):
 
 @transforms.register
 class TranslateY(Operation):
-    scale = 0.5 # 0.33
+    scale = 0.33 # 5 # 0.33
 
     def __call__(self, image):
         y_trans = image.size(-2) # C, H, W
@@ -106,12 +106,13 @@ class TranslateY(Operation):
 
 @transforms.register
 class Rotate(Operation):
-    scale = 180 # 30
+    scale = 30 # 180 # 30
 
     def __call__(self, image):
         return TF.rotate(image, self.sample_magnitude())
 
 
+# TODO: FIX?
 @transforms.register
 class AutoContrast(Operation):
     # https://github.com/pytorch/vision/pull/3117/files
@@ -127,7 +128,7 @@ class AutoContrast(Operation):
         return ((image - minimum) * scale).clamp(0, bound)
 
 
-@transforms.register
+# @transforms.register
 class Invert(Operation):
     def __call__(self, image):
         if image.max() > 1 or image.min() < 0:
@@ -136,7 +137,8 @@ class Invert(Operation):
 
 
 # removed for efficient training
-# @transforms.register
+# TODO: FIX?
+@transforms.register
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
     def __call__(self, image):
@@ -168,24 +170,30 @@ class Equalize(Operation):
 
 @transforms.register
 class Solarize(Operation):
+    scale = 110/255.
+
     # https://github.com/pytorch/vision/pull/3112/files
     def __call__(self, image):
         # assume given image is floats and values are between 0 and 1
-        threshold = 1 - self.sample_magnitude(simple=True)
-        mask = (image > threshold).float()
+        threshold = self.sample_magnitude(simple=True)
+        mask = (image >= threshold).float()
         image = mask * (1-image) + (1-mask) * image
         image = image.clamp(0., 1.)
         return image
 
+
 @transforms.register
 class Posterize(Operation):
     # https://github.com/pytorch/vision/pull/3108/files
+    scale = 4 # 7
+
     def __call__(self, image):
         if image.max() > 1 or image.min() < 0:
             raise ValueError('the value of image must lie between 0 and 1')
 
         image = (image * 255).int()
-        bits = int(8 - 7*self.sample_magnitude(simple=True))
+        bits = int(8 - self.scale*self.sample_magnitude(simple=True))
+        print(bits)
         mask = -int(2**(8 - bits))
         image = image & mask
         image = (image / 255.).float()
@@ -195,7 +203,7 @@ class Posterize(Operation):
 
 @transforms.register
 class Contrast(Operation):
-    scale = 0.95 # 0.9
+    scale = 0.9 # 0.95
     bias = 1
 
     def __call__(self, image):
@@ -207,7 +215,7 @@ class Contrast(Operation):
 
 @transforms.register
 class Color(Operation):
-    scale = 0.95 # 0.9
+    scale = 0.9 # 0.95
     bias = 1
 
     def __call__(self, image):
@@ -220,7 +228,7 @@ class Color(Operation):
 
 @transforms.register
 class Brightness(Operation):
-    scale = 0.95 # 0.9
+    scale = 0.9 # 0.95
     bias = 1
 
     def __call__(self, image):
@@ -230,7 +238,7 @@ class Brightness(Operation):
 @transforms.register
 class Sharpness(Operation):
     # https://github.com/pytorch/vision/pull/3114/files
-    scale = 0.95 # 0.9
+    scale = 0.9 # 0.95
     bias = 1
 
     def __call__(self, image):
@@ -261,7 +269,7 @@ class Sharpness(Operation):
 
 
 # removed for RandAugment
-@transforms.register
+# @transforms.register
 class Cutout(Operation):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -279,7 +287,7 @@ class Identity(Operation):
         return image
 
 
-@transforms.register
+# @transforms.register
 class SamplePairing(Operation):
     scale = 0.45 # 0.4
 
