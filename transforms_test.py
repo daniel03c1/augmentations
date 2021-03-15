@@ -2,8 +2,9 @@ import PIL.Image
 import PIL.ImageEnhance
 import PIL.ImageOps
 import numpy as np
-import torch
 import os
+import random
+import torch
 import unittest
 from transforms import *
 
@@ -30,20 +31,21 @@ class TransformsTest(unittest.TestCase):
         self.compare(target, pred)
 
     def test_solarize(self):
-        mag = 110
-        target = PIL.ImageOps.solarize(self.pil_img, mag)
-        pred = Solarize(mag / 255.)(self.torch_img)
-        self.compare(target, pred)
-
-    def test_posterize(self):
-        mag = 4
-        target = PIL.ImageOps.posterize(self.pil_img, mag)
+        target = PIL.ImageOps.solarize(self.pil_img, 110)
         pred = Solarize(1.)(self.torch_img)
         self.compare(target, pred)
 
+    def test_posterize(self):
+        target = PIL.ImageOps.posterize(self.pil_img, 4)
+        pred = Posterize(1.)(self.torch_img)
+        self.compare(target, pred)
+
     def test_sharpness(self):
-        target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(1.3)
-        pred = Solarize(0.3)(self.torch_img)
+        random.seed(2)
+        target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(1.9)
+        pred = Sharpness(1.)(self.torch_img)
+        # print((np.array(target)/255.).transpose(2, 0, 1))
+        # print(pred.numpy())
         self.compare(target, pred)
 
     def test_identity(self):

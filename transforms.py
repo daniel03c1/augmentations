@@ -192,8 +192,7 @@ class Posterize(Operation):
             raise ValueError('the value of image must lie between 0 and 1')
 
         image = (image * 255).int()
-        bits = int(8 - self.scale*self.sample_magnitude(simple=True))
-        print(bits)
+        bits = int(8 - self.sample_magnitude(simple=True))
         mask = -int(2**(8 - bits))
         image = image & mask
         image = (image / 255.).float()
