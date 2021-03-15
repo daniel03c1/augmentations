@@ -25,9 +25,6 @@ class BagOfOps:
 
 
 class Operation:
-    scale = 1
-    bias = 0
-
     def __init__(self, magnitude):
         if not isinstance(magnitude, (list, tuple)):
             magnitude = [magnitude]
@@ -37,16 +34,14 @@ class Operation:
         raise NotImplemented()
 
     def __repr__(self):
-        return f'{self.__class__.__name__}: ' \
-               f'{self.scale}, {self.bias}, {self.magnitude}'
+        return f'{self.__class__.__name__}: {self.magnitude}'
 
-    def sample_magnitude(self, simple=False):
-        magnitude = random.uniform(min(self.magnitude),
-                                   max(self.magnitude))
-        if simple:
-            return magnitude*self.scale + self.bias
-        return random.choice([-magnitude*self.scale + self.bias,
-                               magnitude*self.scale + self.bias])
+    def sample_magnitude(self, rand_negate=True):
+        magnitude = random.uniform(min(self.magnitude), max(self.magnitude))
+        assert 1 >= magnitude >= 0
+        if not rand_negate:
+            return magnitude
+        return random.choice([-magnitude, magnitude])
 
 
 transforms = BagOfOps()
@@ -54,40 +49,32 @@ transforms = BagOfOps()
 
 @transforms.register
 class ShearX(Operation):
-    scale = 0.3 # 1. # max(Y/X) = 0.3
+    SCALE = 0.3 # 1. # max(Y/X) = 0.3
 
     def __call__(self, image):
+        degree = self.sample_magnitude() * self.SCALE
+        degree = np.arctan2(degree, 1) * 180 / PI
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
-                         shear=(self.sample_magnitude(), 0))
-
-    def sample_magnitude(self): # override
-        magnitude = random.uniform(min(self.magnitude),
-                                   max(self.magnitude))
-        magnitude = np.arctan2(self.scale * magnitude, 1) * 180 / PI
-        return random.choice([-magnitude, magnitude])
+                         shear=(degree, 0))
 
 
 @transforms.register
 class ShearY(Operation):
-    scale = 0.3 # 1. # max(Y/X) = 0.3
+    SCALE = 0.3 # 1. # max(Y/X) = 0.3
 
     def __call__(self, image):
+        degree = self.sample_magnitude() * self.SCALE
+        degree = np.arctan2(degree, 1) * 180 / PI
         return TF.affine(image, angle=0, translate=(0, 0), scale=1., 
-                         shear=(0, self.sample_magnitude()))
-
-    def sample_magnitude(self): # override
-        magnitude = random.uniform(min(self.magnitude),
-                                   max(self.magnitude))
-        magnitude = np.arctan2(self.scale * magnitude, 1) * 180 / PI
-        return random.choice([-magnitude, magnitude])
+                         shear=(0, degree))
 
 
 @transforms.register
 class TranslateX(Operation):
-    scale = 0.33 # 5 # 0.33
+    SCALE = 0.33 # 5 # 0.33
 
     def __call__(self, image):
-        x_trans = image.size(-1) # C, H, W
+        x_trans = image.size(-1) * self.SCALE # C, H, W
         return TF.affine(image, angle=0, 
                          translate=(x_trans*self.sample_magnitude(), 0), 
                          scale=1., shear=(0, 0))
@@ -95,10 +82,10 @@ class TranslateX(Operation):
 
 @transforms.register
 class TranslateY(Operation):
-    scale = 0.33 # 5 # 0.33
+    SCALE = 0.33 # 5 # 0.33
 
     def __call__(self, image):
-        y_trans = image.size(-2) # C, H, W
+        y_trans = image.size(-2) * self.SCALE # C, H, W
         return TF.affine(image, angle=0, 
                          translate=(0, y_trans*self.sample_magnitude()), 
                          scale=1., shear=(0, 0))
@@ -106,13 +93,12 @@ class TranslateY(Operation):
 
 @transforms.register
 class Rotate(Operation):
-    scale = 30 # 180 # 30
+    SCALE = 30 
 
     def __call__(self, image):
-        return TF.rotate(image, self.sample_magnitude())
+        return TF.rotate(image, self.sample_magnitude() * self.SCALE)
 
 
-# TODO: FIX?
 @transforms.register
 class AutoContrast(Operation):
     # https://github.com/pytorch/vision/pull/3117/files
@@ -131,13 +117,10 @@ class AutoContrast(Operation):
 # @transforms.register
 class Invert(Operation):
     def __call__(self, image):
-        if image.max() > 1 or image.min() < 0:
-            raise ValueError('the value of image must lie between 0 and 1')
         return 1 - image
 
 
 # removed for efficient training
-# TODO: FIX?
 @transforms.register
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
@@ -170,29 +153,26 @@ class Equalize(Operation):
 
 @transforms.register
 class Solarize(Operation):
-    scale = 110/255.
+    SCALE = 110 / 255.
 
-    # https://github.com/pytorch/vision/pull/3112/files
     def __call__(self, image):
         # assume given image is floats and values are between 0 and 1
-        threshold = self.sample_magnitude(simple=True)
-        mask = (image >= threshold).float()
-        image = mask * (1-image) + (1-mask) * image
-        image = image.clamp(0., 1.)
+        threshold = self.sample_magnitude(rand_negate=False) * self.SCALE
+        image = torch.where(image < threshold, image, 1-image)
         return image
 
 
 @transforms.register
 class Posterize(Operation):
     # https://github.com/pytorch/vision/pull/3108/files
-    scale = 4 # 7
+    SCALE = 4 
 
     def __call__(self, image):
         if image.max() > 1 or image.min() < 0:
             raise ValueError('the value of image must lie between 0 and 1')
 
         image = (image * 255).int()
-        bits = int(8 - self.sample_magnitude(simple=True))
+        bits = int(8 - (1-self.sample_magnitude(rand_negate=False))*self.SCALE)
         mask = -int(2**(8 - bits))
         image = image & mask
         image = (image / 255.).float()
@@ -202,23 +182,17 @@ class Posterize(Operation):
 
 @transforms.register
 class Contrast(Operation):
-    scale = 0.9 # 0.95
-    bias = 1
-
     def __call__(self, image):
-        if image.max() > 1 or image.min() < 0:
-            raise ValueError('the value of image must lie between 0 and 1')
-
-        return TF.adjust_contrast(image, self.sample_magnitude())
+        # [0.1, 1.9]
+        magnitude = 0.1 + 1.8 * self.sample_magnitude(rand_negate=False)
+        return TF.adjust_contrast(image, magnitude)
 
 
 @transforms.register
 class Color(Operation):
-    scale = 0.9 # 0.95
-    bias = 1
-
     def __call__(self, image):
-        color_balance = self.sample_magnitude()
+        # [0.1, 1.9]
+        color_balance = 0.1 + 1.8 * self.sample_magnitude(rand_negate=False)
         image = color_balance * image \
                 + (1-color_balance) * TF.rgb_to_grayscale(image, 3)
         image = image.clamp(0., 1.)
@@ -227,21 +201,19 @@ class Color(Operation):
 
 @transforms.register
 class Brightness(Operation):
-    scale = 0.9 # 0.95
-    bias = 1
-
     def __call__(self, image):
-        return TF.adjust_brightness(image, self.sample_magnitude())
+        # [0.1, 1.9]
+        magnitude = 0.1 + 1.8 * self.sample_magnitude(rand_negate=False)
+        return TF.adjust_brightness(image, magnitude)
 
 
+# TODO: Fix this
 @transforms.register
 class Sharpness(Operation):
     # https://github.com/pytorch/vision/pull/3114/files
-    scale = 0.9 # 0.95
-    bias = 1
-
     def __call__(self, image):
-        sharpness = self.sample_magnitude()
+        # [0.1, 1.9]
+        sharpness = 0.1 + 1.8 * self.sample_magnitude(rand_negate=False)
         image = sharpness * image + (1-sharpness) * self.blur_image(image)
         image = image.clamp(0., 1.)
         return image
@@ -250,7 +222,7 @@ class Sharpness(Operation):
     def blur_image(image: torch.Tensor) -> torch.Tensor:
         n_chan = image.size(-3)
         kernel = torch.ones((3, 3), device=image.device)
-        kernel[1, 1] = 5.
+        kernel[1, 1] = 5
         kernel /= kernel.sum()
         kernel = kernel.expand(n_chan, 1, 3, 3)
 
@@ -273,7 +245,7 @@ class Cutout(Operation):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.random_erasing = torchvision.transforms.RandomErasing(
-            scale=(self.sample_magnitude(simple=True)**2,)*2,
+            scale=(self.sample_magnitude(rand_negate=False)**2,)*2,
             ratio=(1, 1))
 
     def __call__(self, image):
@@ -288,14 +260,14 @@ class Identity(Operation):
 
 # @transforms.register
 class SamplePairing(Operation):
-    scale = 0.45 # 0.4
+    scale = 0.4
 
     def __call__(self, image):
         if image.ndim == 3: # single image:
             return image
 
         idx = torch.randperm(image.size(0))
-        mag = self.sample_magnitude(simple=True)
+        mag = self.sample_magnitude(rand_negate=False)
         return mag * image[idx] + (1-mag) * image
 
 

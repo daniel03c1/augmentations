@@ -37,15 +37,12 @@ class TransformsTest(unittest.TestCase):
 
     def test_posterize(self):
         target = PIL.ImageOps.posterize(self.pil_img, 4)
-        pred = Posterize(1.)(self.torch_img)
+        pred = Posterize(0.)(self.torch_img)
         self.compare(target, pred)
 
     def test_sharpness(self):
-        random.seed(2)
-        target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(1.9)
-        pred = Sharpness(1.)(self.torch_img)
-        # print((np.array(target)/255.).transpose(2, 0, 1))
-        # print(pred.numpy())
+        target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(0.1)
+        pred = Sharpness(.0)(self.torch_img)
         self.compare(target, pred)
 
     def test_identity(self):
