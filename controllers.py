@@ -74,9 +74,9 @@ class SGC(nn.Module):
 
         # actions
         mag = mag_mean \
-            + mag_std / 2 * torch.randn((n_samples, *mag_std.size()[1:]))
+            + mag_std / 4 * torch.randn((n_samples, *mag_std.size()[1:]))
         prob = prob_mean \
-             + prob_std / 2 * torch.randn((n_samples, *prob_std.size()[1:]))
+             + prob_std / 4 * torch.randn((n_samples, *prob_std.size()[1:]))
 
         actions = torch.cat([mag, prob], 1)
 
@@ -87,9 +87,9 @@ class SGC(nn.Module):
         mag_mean, mag_std, prob_mean, prob_std = self.split_actions_dist(
             actions_dist)
 
-        mag_log_prob = - ((mag - mag_mean)**2) / (2 * (mag_std**2)) \
+        mag_log_prob = - ((mag - mag_mean)**2) / (2 * ((mag_std/4)**2)) \
                        - mag_std.log() - math.log(math.sqrt(2*math.pi))
-        prob_log_prob = - ((prob - prob_mean)**2) / (2 * (prob_std**2)) \
+        prob_log_prob = - ((prob - prob_mean)**2) / (2 * ((prob_std/4)**2)) \
                         - prob_std.log() - math.log(math.sqrt(2*math.pi))
         
         return torch.cat([mag_log_prob, prob_log_prob], 1)
