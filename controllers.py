@@ -99,20 +99,23 @@ class SGC(nn.Module):
         mag_mean, mag_std, prob_mean, prob_std = self.split_actions_dist(
             actions_dist)
 
-        mag_ent = 0.5 + 0.5 * math.log(2*math.pi) + mag_std.log()
-        prob_ent = 0.5 + 0.5 * math.log(2*math.pi) + prob_std.log()
-        dist_ent = prob_mean.softmax(-1)
-        dist_ent = -(dist_ent*dist_ent.log())
+        ent_const = 0.5 + 0.5 * math.log(2*math.pi)
 
-        return torch.cat([mag_ent, prob_ent, dist_ent], 1).mean()
+        mag_ent = ent_const + mag_std.log()
+        prob_ent = ent_const + prob_std.log()
+        dist_ent = prob_mean / prob_mean.sum(-1, keepdims=True)
+        dist_ent = -(dist_ent*dist_ent.log())
+        dist_prob_ent = ent_const + prob_std.log()
+
+        return torch.cat([mag_ent, prob_ent, dist_ent, dist_prob_ent], 1).mean()
 
     def decode_policy(self, action):
         assert action.ndim == 2
+        action = action.clip(0, 1)
         mag = action[:-self.op_layers]
         prob = action[-self.op_layers:]
 
-        mag = mag.clip(0, 1)
-        prob = (prob / self.temperature).softmax(-1)
+        prob = prob / prob.sum(-1, keepdims=True)
 
         return RandomApply(self.bag_of_ops, prob, mag, double_mag=True)
 
