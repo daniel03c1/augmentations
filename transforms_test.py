@@ -36,8 +36,8 @@ class TransformsTest(unittest.TestCase):
         self.compare(target, pred)
 
     def test_posterize(self):
-        target = PIL.ImageOps.posterize(self.pil_img, 4)
-        pred = Posterize(0.)(self.torch_img)
+        target = PIL.ImageOps.posterize(self.pil_img, 2)
+        pred = Posterize(0.5)(self.torch_img)
         self.compare(target, pred)
 
     def test_sharpness(self):
