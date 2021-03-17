@@ -53,7 +53,7 @@ class Trainer:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
-                rand_prob = max(0, 0.5 - epoch / 50)
+                rand_prob = max(0, 0.5 - epoch / (n_epochs//4))
                 actions, dist = self.rl_agent.act(states, rand_prob)
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
@@ -81,6 +81,7 @@ class Trainer:
                         [policy(xs[i*mini_size:(i+1)*mini_size]) 
                             for i, policy in enumerate(policies)],
                         dim=0)
+                    xs = self.random_erasing(xs)
 
                 if self.normalize:
                     xs = self.normalize(xs)
@@ -143,7 +144,6 @@ class Trainer:
 
                 self.writer.add_histogram('rewards', rewards, epoch)
                 _, output = self.rl_agent.act(torch.zeros(1))
-                print(output[0])
                 self.writer.add_image('output', output, epoch)
 
         self.writer.add_hparams(
