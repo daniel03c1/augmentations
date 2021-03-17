@@ -62,6 +62,7 @@ def main(config, **kwargs):
         [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
 
     # RL
+    '''
     c = SGC(bag_of_ops, op_layers=2)
     c_optimizer = optim.Adam(c.parameters(), lr=0.035)
     ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
@@ -69,6 +70,7 @@ def main(config, **kwargs):
                    batch_size=config.M, 
                    augmentation=None, 
                    device=torch.device('cpu'))
+    '''
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
