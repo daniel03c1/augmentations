@@ -22,7 +22,7 @@ def main(config, **kwargs):
         'train': transforms.Compose([
             transforms.RandomCrop(32, padding=4), 
             transforms.RandomHorizontalFlip(),
-            RandAugment(bag_of_ops, 3, 5/30),
+            RandAugment(bag_of_ops, 2, 14/30),
             transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
         ]),
         'val': transforms.Compose([]),
@@ -62,7 +62,7 @@ def main(config, **kwargs):
         [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
 
     # RL
-    c = SGC(bag_of_ops, op_layers=3, temperature=config.temperature)
+    c = SGC(bag_of_ops, op_layers=2)
     c_optimizer = optim.Adam(c.parameters(), lr=0.035)
     ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
                    grad_norm=0.01,
@@ -81,9 +81,6 @@ def main(config, **kwargs):
                       rl_agent=None) # ppo)
 
     print(bag_of_ops.ops)
-    # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-    #                                                  milestones=[60,120,160],
-    #                                                  gamma=0.2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                            config.epochs)
     trainer.fit(dataloaders['train'], 
@@ -99,7 +96,6 @@ if __name__ == '__main__':
     args.add_argument('--name', type=str, required=True)
     args.add_argument('--epochs', type=int, default=200)
     args.add_argument('--M', type=int, default=8)
-    args.add_argument('--temperature', type=float, default=1.)
     args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--dataset', type=str, default='cifar10')
     config = args.parse_args()
