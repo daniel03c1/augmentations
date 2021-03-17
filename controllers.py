@@ -11,14 +11,12 @@ class SGC(nn.Module):
                  op_layers=4, 
                  n_layers=2, 
                  h_dim=64, 
-                 temperature=1.,
                  **kwargs):
         super(SGC, self).__init__(**kwargs)
         self.bag_of_ops = bag_of_ops
         self.n_ops = bag_of_ops.n_ops
         self.op_layers = op_layers
         self.h_dim = h_dim
-        self.temperature = temperature
 
         ''' modules '''
         # fixed inputs
