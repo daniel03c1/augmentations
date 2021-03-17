@@ -37,9 +37,8 @@ def main(config, **kwargs):
         raise ValueError('invalid dataset')
 
     dataloaders = {}
-    PATH = '/datasets/datasets/cifar'
     for mode in ['train', 'val']:
-        dataloaders[mode] = dataset(PATH,
+        dataloaders[mode] = dataset(config.data_path,
                                     train=mode == 'train',
                                     transform=data_transforms[mode])
         dataloaders[mode] = torch.utils.data.DataLoader(
@@ -100,6 +99,8 @@ if __name__ == '__main__':
     args.add_argument('--M', type=int, default=8)
     args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--dataset', type=str, default='cifar10')
+    args.add_argument('--data_path', type=str, 
+                      default='/datasets/datasets/cifar')
     config = args.parse_args()
 
     main(config)
