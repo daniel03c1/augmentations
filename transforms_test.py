@@ -43,6 +43,8 @@ class TransformsTest(unittest.TestCase):
     def test_sharpness(self):
         target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(0.1)
         pred = Sharpness(.0)(self.torch_img)
+        print((np.array(target)/255.).transpose(2, 0, 1))
+        print(pred.numpy())
         self.compare(target, pred)
 
     def test_identity(self):

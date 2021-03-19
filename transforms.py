@@ -71,7 +71,7 @@ class ShearY(Operation):
 
 @transforms.register
 class TranslateX(Operation):
-    SCALE = 0.33 # 5 # 0.33
+    SCALE = 0.33 
 
     def __call__(self, image):
         x_trans = image.size(-1) * self.SCALE # C, H, W
@@ -82,7 +82,7 @@ class TranslateX(Operation):
 
 @transforms.register
 class TranslateY(Operation):
-    SCALE = 0.33 # 5 # 0.33
+    SCALE = 0.33
 
     def __call__(self, image):
         y_trans = image.size(-2) * self.SCALE # C, H, W
@@ -120,7 +120,6 @@ class Invert(Operation):
         return 1 - image
 
 
-# removed for efficient training
 @transforms.register
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
@@ -153,7 +152,7 @@ class Equalize(Operation):
 
 @transforms.register
 class Solarize(Operation):
-    SCALE = 110 / 255.
+    SCALE = 1 # 110 / 255.
 
     def __call__(self, image):
         # assume given image is floats and values are between 0 and 1
@@ -211,6 +210,7 @@ class Brightness(Operation):
 @transforms.register
 class Sharpness(Operation):
     # https://github.com/pytorch/vision/pull/3114/files
+    # https://github.com/tensorflow/tpu/blob/8462d083dd89489a79e3200bcc8d4063bf362186/models/official/efficientnet/autoaugment.py#L505
     def __call__(self, image):
         # [0.1, 1.9]
         sharpness = 0.1 + 1.8 * self.sample_magnitude(rand_negate=False)
@@ -220,6 +220,8 @@ class Sharpness(Operation):
 
     @staticmethod
     def blur_image(image: torch.Tensor) -> torch.Tensor:
+        image = image * 255
+
         n_chan = image.size(-3)
         kernel = torch.ones((3, 3), device=image.device)
         kernel[1, 1] = 5
@@ -230,12 +232,20 @@ class Sharpness(Operation):
         if single:
             image = image.unsqueeze(0)
 
-        image = torch.nn.functional.conv2d(
-            image, kernel, padding=1, groups=n_chan)
+        degenerate = torch.nn.functional.conv2d(image, kernel, groups=n_chan)
+        degenerate = degenerate.clamp(0., 255.)
+        degenerate = degenerate.int()
+
+        mask = torch.ones_like(degenerate) # [B, C, H-2, W-2]
+        mask = torch.nn.functional.pad(mask, [1, 1, 1, 1, 0, 0, 0, 0])
+        degenerate = torch.nn.functional.pad(degenerate, 
+                                             [1, 1, 1, 1, 0, 0, 0, 0])
+        image = image * (1-mask) + degenerate * mask
 
         if single:
             image = image.squeeze(0)
 
+        image = (image / 255.).float()
         return image
 
 
