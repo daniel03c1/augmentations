@@ -150,7 +150,6 @@ class Trainer:
             {'hp/M': self.M, 'hp/rl_n_steps': self.rl_n_steps},
             {'hp/best_acc': self.best_acc})
 
-        hook.remove() 
         print(f"Best ACC: {self.best_acc:.5f}")
 
     def eval(self, dataloader):
