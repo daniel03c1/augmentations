@@ -100,7 +100,7 @@ class WideResNetBlock(nn.Module):
         out = self.conv2(out)
 
         if self.link is not None:
-            return out + self.link(out0)
+            return out + self.link(x)
         else:
             return out + x
 
