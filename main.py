@@ -31,8 +31,12 @@ def main(config, **kwargs):
     # datasets & dataloaders
     if config.dataset == 'cifar10':
         dataset = EfficientCIFAR10
+        normalize = transforms.Normalize(
+            [0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])
     elif config.dataset == 'cifar100':
         dataset = EfficientCIFAR100
+        normalize = transforms.Normalize(
+            [0.5071, 0.4865, 0.4409], [0.2673, 0.2564, 0.2762])
     else:
         raise ValueError('invalid dataset')
 
@@ -57,11 +61,7 @@ def main(config, **kwargs):
                           nesterov=True,
                           weight_decay=5e-4)
 
-    normalize = transforms.Normalize(
-        [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-
     # RL
-    '''
     c = SGC(bag_of_ops, op_layers=2)
     c_optimizer = optim.Adam(c.parameters(), lr=0.035)
     ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
@@ -69,7 +69,6 @@ def main(config, **kwargs):
                    batch_size=config.M, 
                    augmentation=None, 
                    device=torch.device('cpu'))
-    '''
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
