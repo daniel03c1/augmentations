@@ -31,20 +31,30 @@ class TransformsTest(unittest.TestCase):
         self.compare(target, pred)
 
     def test_solarize(self):
-        target = PIL.ImageOps.solarize(self.pil_img, 110)
-        pred = Solarize(1.)(self.torch_img)
+        # minimum magnitude
+        target = PIL.ImageOps.solarize(self.pil_img, 255)
+        pred = Solarize(0)(self.torch_img)
+        self.compare(target, pred)
+
+        # maximum magnitude
+        target = PIL.ImageOps.solarize(self.pil_img, 0)
+        pred = Solarize(1)(self.torch_img)
         self.compare(target, pred)
 
     def test_posterize(self):
-        target = PIL.ImageOps.posterize(self.pil_img, 2)
-        pred = Posterize(0.5)(self.torch_img)
+        # minimum magnitude
+        target = PIL.ImageOps.posterize(self.pil_img, 4)
+        pred = Posterize(0.)(self.torch_img)
+        self.compare(target, pred)
+
+        # maximum magnitude
+        target = PIL.ImageOps.posterize(self.pil_img, 0)
+        pred = Posterize(1)(self.torch_img)
         self.compare(target, pred)
 
     def test_sharpness(self):
         target = PIL.ImageEnhance.Sharpness(self.pil_img).enhance(0.1)
         pred = Sharpness(.0)(self.torch_img)
-        print((np.array(target)/255.).transpose(2, 0, 1))
-        print(pred.numpy())
         self.compare(target, pred)
 
     def test_identity(self):

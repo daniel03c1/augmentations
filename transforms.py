@@ -71,7 +71,7 @@ class ShearY(Operation):
 
 @transforms.register
 class TranslateX(Operation):
-    SCALE = 0.33 
+    SCALE = 0.3125 # 0.3125 for cifar, 0.45 for imagenet
 
     def __call__(self, image):
         x_trans = image.size(-1) * self.SCALE # C, H, W
@@ -82,7 +82,7 @@ class TranslateX(Operation):
 
 @transforms.register
 class TranslateY(Operation):
-    SCALE = 0.33
+    SCALE = 0.3125 # 0.3125 for cifar, 0.45 for imagenet
 
     def __call__(self, image):
         y_trans = image.size(-2) * self.SCALE # C, H, W
@@ -152,11 +152,9 @@ class Equalize(Operation):
 
 @transforms.register
 class Solarize(Operation):
-    SCALE = 1 # 110 / 255.
-
     def __call__(self, image):
         # assume given image is floats and values are between 0 and 1
-        threshold = self.sample_magnitude(rand_negate=False) * self.SCALE
+        threshold = 1 - self.sample_magnitude(rand_negate=False)
         image = torch.where(image < threshold, image, 1-image)
         return image
 
