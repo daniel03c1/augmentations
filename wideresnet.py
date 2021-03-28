@@ -16,7 +16,7 @@ class WideResNet(nn.Module):
         n = (depth-4) // 6
         widths = [int(v * width) for v in (16, 32, 64)]
 
-        self.conv1 = nn.Conv2d(3, 16, 3, padding=1, bias=True)
+        self.conv1 = nn.Conv2d(3, 16, 3, padding=1)
 
         self.layer0 = self.add_layer(
             WideResNetBlock, 16, widths[0], n, dropout_rate, stride=1)
@@ -63,15 +63,14 @@ class WideResNetBlock(nn.Module):
         self.dropout = nn.Dropout(p=dropout_rate)
 
         self.conv1 = nn.Conv2d(
-            inplanes, outplanes, 3, stride=stride, padding=1, bias=True)
+            inplanes, outplanes, 3, stride=stride, padding=1)
         self.conv2 = nn.Conv2d(
-            outplanes, outplanes, 3, stride=1, padding=1, bias=True)
+            outplanes, outplanes, 3, stride=1, padding=1)
 
         if inplanes == outplanes and stride == 1:
             self.link = None
         else:
-            self.link = nn.Conv2d(
-                inplanes, outplanes, 1, stride=stride, bias=True)
+            self.link = nn.Conv2d(inplanes, outplanes, 1, stride=stride)
         
         init_parameters(self.modules())
 
@@ -95,7 +94,7 @@ def init_parameters(modules):
     for m in modules:
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight)
-            # nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.Linear):
             nn.init.kaiming_normal_(m.weight)
             nn.init.constant_(m.bias, 0)
