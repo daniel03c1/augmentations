@@ -31,10 +31,14 @@ def main(config, **kwargs):
     # datasets & dataloaders
     if config.dataset == 'cifar10':
         dataset = EfficientCIFAR10
+        n_classes = 10
+
         normalize = transforms.Normalize(
             [0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])
     elif config.dataset == 'cifar100':
         dataset = EfficientCIFAR100
+        n_classes = 100
+
         normalize = transforms.Normalize(
             [0.5071, 0.4865, 0.4409], [0.2673, 0.2564, 0.2762])
     else:
@@ -54,7 +58,7 @@ def main(config, **kwargs):
 
     ''' TRAINING '''
     # model
-    model = WideResNet(28, 10, 0.3, 10)
+    model = WideResNet(28, 10, 0., n_classes)
 
     criterion = nn.CrossEntropyLoss(reduction='none')
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9,
