@@ -7,6 +7,7 @@ from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import get_default_device
+from utils import RunningStats
 
 
 class Trainer:
@@ -42,10 +43,20 @@ class Trainer:
 
         self.normalize = normalize
         self.writer = SummaryWriter(f'runs/{name}')
+        self.stats = RunningStats()
 
     def fit(self, train_dataloader, test_dataloader=None, 
             n_epochs=200, scheduler=None):
         chan_axis = 1
+
+        activation = {}
+        def get_activation(name):
+            def hook(model, input, output):
+                activation[name] = input # output
+            return hook
+        hook = self.model.fc.register_forward_hook(get_activation('avgpool'))
+
+        self.stats.clear()
 
         for epoch in range(n_epochs):
             # for RL
@@ -57,6 +68,8 @@ class Trainer:
                 actions, dist = self.rl_agent.act(states, rand_prob)
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
+
+                self.stats.clear()
 
             self.model.train()
 
@@ -79,9 +92,10 @@ class Trainer:
 
                     xs = torch.cat(
                         [policy(xs[i*mini_size:(i+1)*mini_size]) 
-                            for i, policy in enumerate(policies)],
+                            for i, policy in enumerate(policies)] + [org_xs],
                         dim=0)
                     xs = self.random_erasing(xs)
+                    ys = torch.cat([ys, ys[::org_step]], dim=0)
 
                 if self.normalize:
                     xs = self.normalize(xs)
@@ -96,6 +110,17 @@ class Trainer:
                     self.optimizer.step()
 
                 if self.rl_agent:
+                    latent = activation['avgpool'][0].detach()
+
+                    augs = latent[:batch_size:org_step]
+                    org = latent[batch_size:]
+
+                    # augs: [batch_size//org_step, h_dim]
+                    # -> [M, batch_size//org_step//M, h_dim]
+                    dists = (augs - org).reshape(self.M, -1, augs.size(-1))
+                    for i in range(dists.size(1)):
+                        self.stats.push(dists[:, i])
+
                     # original losses
                     loss = loss.detach()
                     losses = 0.95 * losses \
@@ -131,8 +156,31 @@ class Trainer:
                 scheduler.step()
 
             if self.rl_agent:
+                # for test
+                order = torch.argsort(losses)
+
+                mean = self.stats.mean().square().sum(-1).sqrt()
+                std = self.stats.std().square().sum(-1).sqrt()
+
+                # sort
+                self.writer.add_image('inter/dist_mean', 
+                                      mean[order].unsqueeze(0),
+                                      epoch, dataformats='HW')
+                self.writer.add_image('inter/dist_std', 
+                                      std[order].unsqueeze(0),
+                                      epoch, dataformats='HW')
+                self.writer.add_image('inter/dist_loss', 
+                                      losses[order].unsqueeze(0),
+                                      epoch, dataformats='HW')
+
+                coef = mean / (std + 1e-8)
                 self.writer.add_histogram('losses', losses, epoch)
-                rewards = -losses
+                self.writer.add_histogram('coef', coef, epoch)
+
+                losses = (losses - losses.mean()) / (losses.std() + 1e-8)
+                coef = (coef - coef.mean()) / (coef.std() + 1e-8)
+
+                rewards = -losses - coef
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
