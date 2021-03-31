@@ -36,7 +36,8 @@ class SGC(nn.Module):
         # middle
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2),
+                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
+                activation='gelu'),
             num_layers=n_layers)
 
         # back
@@ -53,6 +54,7 @@ class SGC(nn.Module):
         probs += self.order_emb(self.order_emb_indices)
 
         probs = self.encoder(probs)
+        probs = torch.sin(probs) # for test
         probs = probs.repeat(n_samples, 1, 1)
 
         # action dist
