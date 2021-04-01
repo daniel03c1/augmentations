@@ -22,8 +22,8 @@ def main(config, **kwargs):
         'train': transforms.Compose([
             transforms.RandomCrop(32, padding=4), 
             transforms.RandomHorizontalFlip(),
-            RandAugment(bag_of_ops, 2, 14/30),
-            transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
+            # RandAugment(bag_of_ops, 2, 14/30),
+            # transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
         ]),
         'val': transforms.Compose([]),
     }
@@ -79,7 +79,7 @@ def main(config, **kwargs):
                       criterion=criterion,
                       name=config.name,
                       bag_of_ops=bag_of_ops,
-                      rl_n_steps=12, 
+                      rl_n_steps=16, 
                       M=config.M, 
                       normalize=normalize,
                       rl_agent=None) # ppo)
@@ -90,7 +90,8 @@ def main(config, **kwargs):
     trainer.fit(dataloaders['train'], 
                 dataloaders['val'], 
                 n_epochs=config.epochs,
-                scheduler=scheduler)
+                scheduler=scheduler,
+                augmentation=RandAugment(bag_of_ops, 2, 14/30))
 
 
 if __name__ == '__main__':

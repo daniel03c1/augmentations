@@ -46,7 +46,7 @@ class Trainer:
         self.stats = RunningStats()
 
     def fit(self, train_dataloader, test_dataloader=None, 
-            n_epochs=200, scheduler=None):
+            n_epochs=200, scheduler=None, augmentation=None):
         chan_axis = 1
 
         activation = {}
@@ -60,16 +60,16 @@ class Trainer:
 
         for epoch in range(n_epochs):
             # for RL
+            losses = torch.zeros(
+                (self.M,), dtype=torch.float, device=self.device)
+            self.stats.clear()
+
             if self.rl_agent:
-                losses = torch.zeros(
-                    (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
                 rand_prob = max(0, 0.5 - epoch / (n_epochs//4))
                 actions, dist = self.rl_agent.act(states, rand_prob)
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
-
-                self.stats.clear()
 
             self.model.train()
 
@@ -82,20 +82,24 @@ class Trainer:
                 xs = xs.to(self.device)
                 ys = ys.to(self.device)
                 
-                # subdivide into M parts
+                # preprocessing
                 batch_size = xs.size(0)
+                org_step = 8
+                org_xs = xs[::org_step]
+
                 if self.rl_agent:
                     mini_size = batch_size // self.M
 
-                    org_step = 8
-                    org_xs = xs[::org_step]
-
                     xs = torch.cat(
                         [policy(xs[i*mini_size:(i+1)*mini_size]) 
-                            for i, policy in enumerate(policies)] + [org_xs],
+                            for i, policy in enumerate(policies)],
                         dim=0)
-                    xs = self.random_erasing(xs)
-                    ys = torch.cat([ys, ys[::org_step]], dim=0)
+                elif augmentation:
+                    xs = augmentation(xs)
+                xs = self.random_erasing(xs)
+
+                xs = torch.cat([xs, org_xs], dim=0)
+                ys = torch.cat([ys, ys[::org_step]], dim=0)
 
                 if self.normalize:
                     xs = self.normalize(xs)
@@ -109,22 +113,22 @@ class Trainer:
                     loss[:batch_size].mean().backward()
                     self.optimizer.step()
 
-                if self.rl_agent:
-                    latent = activation['avgpool'][0].detach()
+                # extracting statistics
+                latent = activation['avgpool'][0].detach()
 
-                    augs = latent[:batch_size:org_step]
-                    org = latent[batch_size:]
+                augs = latent[:batch_size:org_step]
+                org = latent[batch_size:]
 
-                    # augs: [batch_size//org_step, h_dim]
-                    # -> [M, batch_size//org_step//M, h_dim]
-                    dists = (augs - org).reshape(self.M, -1, augs.size(-1))
-                    for i in range(dists.size(1)):
-                        self.stats.push(dists[:, i])
+                # augs: [batch_size//org_step, h_dim]
+                # -> [M, batch_size//org_step//M, h_dim]
+                dists = (augs - org).reshape(self.M, -1, augs.size(-1))
+                for i in range(dists.size(1)):
+                    self.stats.push(dists[:, i])
 
-                    # original losses
-                    loss = loss.detach()
-                    losses = 0.95 * losses \
-                           + 0.05 * loss.reshape(self.M, -1).mean(1)
+                # original losses
+                loss = loss.detach()
+                losses = 0.95 * losses \
+                       + 0.05 * loss.reshape(self.M, -1).mean(1)
 
                 # metrics
                 pred_cls = torch.argmax(ys_hat, -1)
@@ -155,34 +159,24 @@ class Trainer:
             if scheduler:
                 scheduler.step()
 
+            # tensorboard
+            # for test
+            mean = self.stats.mean().square().sum(-1).sqrt()
+            std = self.stats.std().square().sum(-1).sqrt()
+            coef = mean / (std + 1e-8)
+
+            self.writer.add_histogram('mean', mean, epoch)
+            self.writer.add_histogram('std', std, epoch)
+            self.writer.add_histogram('coef', coef, epoch)
+            self.writer.add_histogram('losses', losses, epoch)
+
+            losses = (losses - losses.mean()) / (losses.std() + 1e-8)
+            coef = (coef - coef.mean()) / (coef.std() + 1e-8)
+
+            rewards = - coef - losses
+            assert torch.isnan(rewards).sum() == 0
+
             if self.rl_agent:
-                # for test
-                order = torch.argsort(losses)
-
-                mean = self.stats.mean().square().sum(-1).sqrt()
-                std = self.stats.std().square().sum(-1).sqrt()
-
-                # sort
-                self.writer.add_image('inter/dist_mean', 
-                                      mean[order].unsqueeze(0),
-                                      epoch, dataformats='HW')
-                self.writer.add_image('inter/dist_std', 
-                                      std[order].unsqueeze(0),
-                                      epoch, dataformats='HW')
-                self.writer.add_image('inter/dist_loss', 
-                                      losses[order].unsqueeze(0),
-                                      epoch, dataformats='HW')
-
-                coef = mean / (std + 1e-8)
-                self.writer.add_histogram('losses', losses, epoch)
-                self.writer.add_histogram('coef', coef, epoch)
-
-                losses = (losses - losses.mean()) / (losses.std() + 1e-8)
-                coef = (coef - coef.mean()) / (coef.std() + 1e-8)
-
-                rewards = -losses - coef
-                assert torch.isnan(rewards).sum() == 0
-
                 # normalize rewards for stable training
                 rewards = rewards.view(-1, 1, 1) # TODO: remove this
                 self.rl_agent.cache_batch(
@@ -190,7 +184,6 @@ class Trainer:
                 self.rl_agent.learn(n_steps=self.rl_n_steps)
                 self.rl_agent.save()
 
-                self.writer.add_histogram('rewards', rewards, epoch)
                 _, output = self.rl_agent.act(torch.zeros(1))
                 self.writer.add_image('output', output, epoch)
 
