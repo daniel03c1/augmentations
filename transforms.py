@@ -120,7 +120,7 @@ class Invert(Operation):
         return 1 - image
 
 
-@transforms.register
+# @transforms.register
 class Equalize(Operation):
     # https://github.com/pytorch/vision/pull/3119/files
     def __call__(self, image):
@@ -277,6 +277,20 @@ class SamplePairing(Operation):
         idx = torch.randperm(image.size(0))
         mag = self.sample_magnitude(rand_negate=False)
         return mag * image[idx] + (1-mag) * image
+
+
+@transforms.register
+class Zeros(Operation):
+    def __call__(self, image):
+        return image * 0
+
+
+@transforms.register
+class Danger(Operation):
+    def __call__(self, image):
+        if self.sample_magnitude(rand_negate=False) > 0.25:
+            return image * 0
+        return image
 
 
 if __name__ == '__main__':
