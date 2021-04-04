@@ -11,12 +11,12 @@ class PPOAgent:
     def __init__(self, 
                  net: nn.Module, 
                  name: str,
+                 mem_maxlen: int,
                  lr=0.00035,
                  grad_norm=0.5,
                  batch_size=1, 
                  epsilon=0.2,
                  ent_coef=1e-5,
-                 online=True,
                  augmentation=None,
                  device=None):
         if device:
@@ -28,11 +28,10 @@ class PPOAgent:
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
         self.grad_norm = grad_norm
 
-        self.memory = deque(maxlen=256)
+        self.memory = deque(maxlen=mem_maxlen)
         self.batch_size = batch_size
         self.epsilon = epsilon
         self.ent_coef = ent_coef
-        self.online = online
         self.augmentation = augmentation
 
     def act(self, *args, **kwargs):
@@ -79,9 +78,6 @@ class PPOAgent:
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 
                                            self.grad_norm)
             self.optimizer.step()
-
-        if self.online:
-            self.clear_memory()
 
         return loss # the last loss
 
