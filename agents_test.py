@@ -37,8 +37,8 @@ class AgentsTest(unittest.TestCase):
     def test_ppo_agent(self):
         ppo = PPOAgent(self.controller, 
                        'agents_test_ppo.pt', 
-                       batch_size=32,
-                       online=False)
+                       mem_maxlen=32,
+                       batch_size=32)
         actions, dists = ppo.act(self.states)
         ppo.cache_batch(
             self.states, actions, dists, self.rewards, self.next_states)
