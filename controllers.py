@@ -74,9 +74,9 @@ class SGC(nn.Module):
 
         # actions
         mag = mag_mean \
-            + mag_std / 4 * torch.randn((n_samples, *mag_std.size()[1:]))
+            + mag_std / 2 * torch.randn((n_samples, *mag_std.size()[1:]))
         prob = prob_mean \
-             + prob_std / 4 * torch.randn((n_samples, *prob_std.size()[1:]))
+             + prob_std / 2 * torch.randn((n_samples, *prob_std.size()[1:]))
 
         actions = torch.cat([mag, prob], 1)
 
@@ -87,9 +87,9 @@ class SGC(nn.Module):
         mag_mean, mag_std, prob_mean, prob_std = self.split_actions_dist(
             actions_dist)
 
-        mag_log_prob = - ((mag - mag_mean)**2) / (2 * ((mag_std/4)**2)) \
+        mag_log_prob = - ((mag - mag_mean)**2) / (2 * ((mag_std/2)**2)) \
                        - mag_std.log() - math.log(math.sqrt(2*math.pi))
-        prob_log_prob = - ((prob - prob_mean)**2) / (2 * ((prob_std/4)**2)) \
+        prob_log_prob = - ((prob - prob_mean)**2) / (2 * ((prob_std/2)**2)) \
                         - prob_std.log() - math.log(math.sqrt(2*math.pi))
         
         return torch.cat([mag_log_prob, prob_log_prob], 1)
@@ -148,78 +148,82 @@ class SGCv2(nn.Module):
 
         ''' modules '''
         # fixed inputs
+        # [op_layer*6, n_ops, h_dim]
         seq_len = op_layers * 6 # [mean, std] of mag*2, [mean, std] of prob
-        self.input = torch.normal(
-            torch.zeros((1, seq_len, h_dim)), torch.ones(1, seq_len, h_dim))
+
+        self.op_emb_indices = torch.arange(self.n_ops).reshape(1, -1)
         self.type_emb_indices = torch.arange(6) \
                                      .repeat_interleave(op_layers) \
-                                     .unsqueeze(0)
-        self.order_emb_indices = torch.arange(op_layers).repeat(6).unsqueeze(0)
+                                     .reshape(-1, 1)
+        self.order_emb_indices = torch.arange(op_layers).repeat(6) \
+                                      .reshape(-1, 1)
 
         # front
         # [mag_mean, mag_std, prob_mean, prob_std]
+        self.op_emb = nn.Embedding(self.n_ops, h_dim) 
         self.type_emb = nn.Embedding(6, h_dim) 
         self.order_emb = nn.Embedding(op_layers, h_dim) # [1, 2, ..., op_layer]
 
         # middle
+        # inputs of TransformerEncoder should be [seq, batch, hdim]
         self.encoder0 = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*4, 
+                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
                 activation='gelu'),
             num_layers=n_layers)
         self.encoder1 = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=seq_len, nhead=3, dim_feedforward=h_dim*4, 
+                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
                 activation='gelu'),
             num_layers=n_layers)
         self.encoder2 = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*4, 
+                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
                 activation='gelu'),
             num_layers=n_layers)
         self.encoder3 = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=seq_len, nhead=3, dim_feedforward=h_dim*4, 
+                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
                 activation='gelu'),
             num_layers=n_layers)
         self.layernorm = nn.LayerNorm([seq_len, h_dim])
 
         # back
-        self.mag_mean = nn.Linear(h_dim, self.n_ops) # for op means
-        self.mag_std = nn.Linear(h_dim, self.n_ops) # for op stds
-        self.prob_mean = nn.Linear(h_dim, self.n_ops) # for mag
-        self.prob_std = nn.Linear(h_dim, self.n_ops) # for dist
+        self.to_score = nn.Linear(h_dim, 1)
 
     def forward(self, x: torch.Tensor, rand_prob=0.):
         n_samples = x.size(0)
 
+        op_emb = self.op_emb(self.op_emb_indices)
         type_emb = self.type_emb(self.type_emb_indices)
         order_emb = self.order_emb(self.order_emb_indices)
 
-        probs = self.input + type_emb + order_emb
+        # [op_layer*6, n_ops, h_dim]
+        probs = op_emb + type_emb + order_emb
 
         probs = self.encoder0(probs) + probs
-        probs = torch.transpose(probs, -1, -2)
+        probs = torch.transpose(probs, 0, 1)
         probs = self.encoder1(probs) + probs
-        probs = torch.transpose(probs, -1, -2)
+        probs = torch.transpose(probs, 0, 1)
+
+        probs = torch.sin(probs) # probs * probs.sigmoid()
  
-        probs = self.layernorm(probs + type_emb + order_emb)
-
         probs = self.encoder2(probs) + probs
-        probs = torch.transpose(probs, -1, -2)
+        probs = torch.transpose(probs, 0, 1)
         probs = self.encoder3(probs) + probs
-        probs = torch.transpose(probs, -1, -2)
+        probs = torch.transpose(probs, 0, 1)
 
-        probs = torch.sin(probs) # for test
+        probs = torch.sin(probs) # probs * probs.sigmoid()
+        probs = self.to_score(probs).sigmoid()
+        probs = probs.squeeze(-1)
+
         probs = probs.repeat(n_samples, 1, 1)
 
         # action dist
-        mag_mean = self.mag_mean(probs[:, :2*self.op_layers]).sigmoid()
-        mag_std = self.mag_std(
-            probs[:, 2*self.op_layers:4*self.op_layers]).sigmoid()
-        prob_mean = self.prob_mean(
-            probs[:, -2*self.op_layers:-self.op_layers]).sigmoid()
-        prob_std = self.prob_std(probs[:, -self.op_layers:]).sigmoid()
+        mag_mean = probs[:, :2*self.op_layers]
+        mag_std = probs[:, 2*self.op_layers:4*self.op_layers]
+        prob_mean = probs[:, -2*self.op_layers:-self.op_layers]
+        prob_std = probs[:, -self.op_layers:]
 
         action_dist = torch.cat([mag_mean, mag_std, prob_mean, prob_std], 1)
         
@@ -230,9 +234,9 @@ class SGCv2(nn.Module):
 
         # actions
         mag = mag_mean \
-            + mag_std / 4 * torch.randn((n_samples, *mag_std.size()[1:]))
+            + mag_std / 2 * torch.randn((n_samples, *mag_std.size()[1:]))
         prob = prob_mean \
-             + prob_std / 4 * torch.randn((n_samples, *prob_std.size()[1:]))
+             + prob_std / 2 * torch.randn((n_samples, *prob_std.size()[1:]))
 
         actions = torch.cat([mag, prob], 1)
 
@@ -243,9 +247,9 @@ class SGCv2(nn.Module):
         mag_mean, mag_std, prob_mean, prob_std = self.split_actions_dist(
             actions_dist)
 
-        mag_log_prob = - ((mag - mag_mean)**2) / (2 * ((mag_std/4)**2)) \
+        mag_log_prob = - ((mag - mag_mean)**2) / (2 * ((mag_std/2)**2)) \
                        - mag_std.log() - math.log(math.sqrt(2*math.pi))
-        prob_log_prob = - ((prob - prob_mean)**2) / (2 * ((prob_std/4)**2)) \
+        prob_log_prob = - ((prob - prob_mean)**2) / (2 * ((prob_std/2)**2)) \
                         - prob_std.log() - math.log(math.sqrt(2*math.pi))
         
         return torch.cat([mag_log_prob, prob_log_prob], 1)
@@ -320,7 +324,7 @@ if __name__ == '__main__':
 
     bag = transforms
 
-    brain = SGCv2(bag, op_layers=4) # PolicyController(bag, op_layers=4)
+    brain = SGCv2(bag, op_layers=3) # PolicyController(bag, op_layers=4)
     print(sum([p.numel() for p in brain.parameters()]))
 
     x = torch.zeros(2)
