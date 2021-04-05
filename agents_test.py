@@ -48,6 +48,7 @@ class AgentsTest(unittest.TestCase):
         test = ppo.learn(100).mean()
         self.assertGreater(base, test)
         ppo.clear_memory()
+        ppo.apply_gamma(0.9)
 
 
 if __name__ == '__main__':

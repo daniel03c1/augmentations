@@ -63,16 +63,19 @@ class PPOAgent:
             self.optimizer.zero_grad()
 
             _, new_dists = self.net(states)
-            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+
             # TODO: precalculate log_probs of dists
             ratios = self.net.calculate_log_probs(actions, new_dists) \
                    - self.net.calculate_log_probs(actions, dists).detach()
-            ratios = torch.exp(torch.clamp(ratios, -5, 5)) # for stability
+            # for stability
+            ratios = torch.exp(torch.clamp(ratios, -5, 5))
 
             loss = -torch.min(
                 ratios*rewards,
                 torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon)*rewards)
+            assert torch.isnan(loss).sum() == 0
             loss -= self.ent_coef * self.net.calculate_entropy(new_dists)
+            assert torch.isnan(loss).sum() == 0
 
             torch.mean(loss).backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 
@@ -99,4 +102,12 @@ class PPOAgent:
 
     def decode_policy(self, *args, **kwargs):
         return self.net.decode_policy(*args, **kwargs)
+
+    def apply_gamma(self, gamma):
+        # gamma refers deprecation rate
+        # it multiplies gamma to every reward in the queue
+        for i in range(len(self.memory)):
+            state, action, dist, reward, next_state = self.memory.popleft()
+            reward *= gamma
+            self.cache(state, action, dist, reward, next_state)
 
