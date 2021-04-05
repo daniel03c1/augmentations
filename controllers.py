@@ -151,12 +151,12 @@ class SGCv2(nn.Module):
         # [op_layer*6, n_ops, h_dim]
         seq_len = op_layers * 6 # [mean, std] of mag*2, [mean, std] of prob
 
-        self.op_emb_indices = torch.arange(self.n_ops).reshape(1, -1)
+        self.op_emb_indices = torch.arange(self.n_ops).reshape(1, 1, -1)
         self.type_emb_indices = torch.arange(6) \
                                      .repeat_interleave(op_layers) \
-                                     .reshape(-1, 1)
+                                     .reshape(1, -1, 1)
         self.order_emb_indices = torch.arange(op_layers).repeat(6) \
-                                      .reshape(-1, 1)
+                                      .reshape(1, -1, 1)
 
         # front
         # [mag_mean, mag_std, prob_mean, prob_std]
@@ -165,28 +165,12 @@ class SGCv2(nn.Module):
         self.order_emb = nn.Embedding(op_layers, h_dim) # [1, 2, ..., op_layer]
 
         # middle
-        # inputs of TransformerEncoder should be [seq, batch, hdim]
-        self.encoder0 = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
-                activation='gelu'),
-            num_layers=n_layers)
-        self.encoder1 = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
-                activation='gelu'),
-            num_layers=n_layers)
-        self.encoder2 = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
-                activation='gelu'),
-            num_layers=n_layers)
-        self.encoder3 = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=h_dim, nhead=4, dim_feedforward=h_dim*2, 
-                activation='gelu'),
-            num_layers=n_layers)
-        self.layernorm = nn.LayerNorm([seq_len, h_dim])
+        self.n_layers = n_layers
+        self.fcs = nn.ModuleList(
+            [nn.Linear(h_dim, h_dim) for i in range(n_layers*2)])
+        self.layernorms = nn.ModuleList(
+            [nn.LayerNorm([seq_len, self.n_ops, h_dim]) 
+             for i in range(n_layers*2)])
 
         # back
         self.to_score = nn.Linear(h_dim, 1)
@@ -200,20 +184,19 @@ class SGCv2(nn.Module):
 
         # [op_layer*6, n_ops, h_dim]
         probs = op_emb + type_emb + order_emb
+        for i in range(self.n_layers):
+            # similar to simple conv block
+            org = probs
 
-        probs = self.encoder0(probs) + probs
-        probs = torch.transpose(probs, 0, 1)
-        probs = self.encoder1(probs) + probs
-        probs = torch.transpose(probs, 0, 1)
+            probs = self.fcs[i*2](probs)
+            probs = self.layernorms[i*2](probs)
+            probs = probs * probs.sigmoid() # swish
 
-        probs = torch.sin(probs) # probs * probs.sigmoid()
- 
-        probs = self.encoder2(probs) + probs
-        probs = torch.transpose(probs, 0, 1)
-        probs = self.encoder3(probs) + probs
-        probs = torch.transpose(probs, 0, 1)
+            probs = self.fcs[i*2](probs)
+            probs = self.layernorms[i*2](probs)
+            probs = probs + org
+            probs = probs * probs.sigmoid() # swish
 
-        probs = torch.sin(probs) # probs * probs.sigmoid()
         probs = self.to_score(probs).sigmoid()
         probs = probs.squeeze(-1)
 
