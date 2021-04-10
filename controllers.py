@@ -380,7 +380,7 @@ class SGCvD(nn.Module):
         return 0
 
     def decode_policy(self, action):
-        return RandomApply(self.bag_of_ops, prob, mag, double_mag=True)
+        return RandomApplyDiscrete(self.bag_of_ops, action)
 
 
 class RandomApply(torch.nn.Module):
@@ -410,32 +410,28 @@ class RandomApply(torch.nn.Module):
 
 
 class RandomApplyDiscrete(torch.nn.Module):
-    def __init__(self, controller_action):
+    def __init__(self, bag_of_ops, controller_action):
         super().__init__()
-        self.probs_per_layer = probs_per_layer
-        self.op_layers = magnitudes.size(0)
-        if double_mag:
-            self.op_layers = self.op_layers // 2
+        self.magnitudes = controller_action[..., :-1] # [layer, ops, n_bins]
+        self.probs = controller_action[..., -1] # [layer, ops]
+        self.op_layers = controller_action.size(0)
 
         self.layers = [
-            [bag_of_ops[i]([magnitudes[j, i].cpu().item(), 
-                            magnitudes[j+self.op_layers, i].cpu().item()]) 
+            [bag_of_ops[i](self.magnitudes[j, i])
              for i in range(bag_of_ops.n_ops)]
             for j in range(self.op_layers)]
 
     # @torch.jit.script
     def forward(self, image):
-        opers = self.probs_per_layer.multinomial(1).squeeze()
+        opers = self.probs.multinomial(1).squeeze()
         for i in range(self.op_layers):
             image = self.layers[i][opers[i]](image)
         return image
 
 
 if __name__ == '__main__':
-    from transforms import transforms
+    from discrete_transforms import transforms as bag
     from utils import get_default_device
-
-    bag = transforms
 
     brain = SGCvD(bag, op_layers=3)
     print(sum([p.numel() for p in brain.parameters()]))
@@ -447,10 +443,10 @@ if __name__ == '__main__':
     '''
     log_prob = brain.calculate_log_probs(action, prob)
     entropy = brain.calculate_entropy(prob)
+    '''
 
-    policy = brain.decode_policy(action[0])
+    policy = brain.decode_policy(actions[0])
     y = torch.rand((32, 3, 32, 32))
     for i in range(5):
         print(policy(y).size())
-    '''
 
