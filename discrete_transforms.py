@@ -38,7 +38,7 @@ class Operation:
         return f'{self.__class__.__name__}: {self.min_mag}, {self.max_mag}'
 
     def _sample_mag(self):
-        magnitude = probs.multinomial(1)[0].item() / self.div
+        magnitude = self.probs.multinomial(1)[0].item() / self.div
         return self.min_mag + magnitude * (self.max_mag - self.min_mag)
 
 
