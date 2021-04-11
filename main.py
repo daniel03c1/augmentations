@@ -6,12 +6,12 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.optim import lr_scheduler
 
-from agents import PPOAgent
+from agents import DiscretePPOAgent
 from augments import RandAugment
 from controllers import *
 from dataloader import *
 from trainers import Trainer
-from transforms import transforms as bag_of_ops
+from discrete_transforms import transforms as bag_of_ops
 from wideresnet import WideResNet
 
 
@@ -22,8 +22,8 @@ def main(config, **kwargs):
         'train': transforms.Compose([
             transforms.RandomCrop(32, padding=4), 
             transforms.RandomHorizontalFlip(),
-            RandAugment(bag_of_ops, 2, 14/30),
-            transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
+            # RandAugment(bag_of_ops, 2, 14/30),
+            # transforms.RandomErasing(p=1, scale=(0.25, 0.25), ratio=(1., 1.)),
         ]),
         'val': transforms.Compose([]),
     }
@@ -66,23 +66,24 @@ def main(config, **kwargs):
                           weight_decay=5e-4)
 
     # RL
-    c = SGC(bag_of_ops, op_layers=2)
+    c = SGCvD(bag_of_ops, op_layers=2)
     c_optimizer = optim.Adam(c.parameters(), lr=0.035)
-    ppo = PPOAgent(c, name=f'{config.name}_ppo.pt', 
-                   grad_norm=0.01,
-                   batch_size=config.M, 
-                   augmentation=None, 
-                   device=torch.device('cpu'))
+    ppo = DiscretePPOAgent(c, name=f'{config.name}_ppo.pt', 
+                           mem_maxlen=config.mem_size*config.M,
+                           batch_size=config.M, 
+                           ent_coef=1e-3,
+                           device=torch.device('cpu'))
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
                       criterion=criterion,
                       name=config.name,
                       bag_of_ops=bag_of_ops,
-                      rl_n_steps=12, 
+                      rl_n_steps=4, 
+                      deprecation_rate=config.gamma,
                       M=config.M, 
                       normalize=normalize,
-                      rl_agent=None) # ppo)
+                      rl_agent=ppo)
 
     print(bag_of_ops.ops)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
@@ -99,9 +100,11 @@ if __name__ == '__main__':
     args = argparse.ArgumentParser()
     args.add_argument('--name', type=str, required=True)
     args.add_argument('--epochs', type=int, default=200)
-    args.add_argument('--M', type=int, default=8)
+    args.add_argument('--M', type=int, default=16)
+    args.add_argument('--mem_size', type=int, default=3)
+    args.add_argument('--gamma', type=float, default=1.)
     args.add_argument('--batch_size', type=int, default=128)
-    args.add_argument('--dataset', type=str, default='cifar10')
+    args.add_argument('--dataset', type=str, default='cifar100')
     args.add_argument('--data_path', type=str, 
                       default='/datasets/datasets/cifar')
     config = args.parse_args()
