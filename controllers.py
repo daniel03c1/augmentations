@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 
+EPS = 1e-5
 
 class SGC(nn.Module):
     """ simple and general controller """
@@ -283,9 +284,9 @@ class SGCvD(nn.Module):
                  bag_of_ops, 
                  op_layers=4, 
                  n_layers=3,
-                 h_dim=64, 
+                 h_dim=128,
                  dropout_p=0.3,
-                 bins=10,
+                 bins=16,
                  **kwargs):
         super(SGCvD, self).__init__(**kwargs)
         self.bag_of_ops = bag_of_ops
@@ -301,25 +302,19 @@ class SGCvD(nn.Module):
 
         # front
         self.op_emb = nn.Embedding(self.n_ops, h_dim) 
-        self.op_emb_do = nn.Dropout(dropout_p)
         self.order_emb = nn.Embedding(op_layers, h_dim)
-        self.order_emb_do = nn.Dropout(dropout_p)
 
         # middle
         self.n_layers = n_layers
         self.fcs = nn.ModuleList(
             [nn.Linear(h_dim, h_dim) for i in range(n_layers*2)])
         self.layernorms = nn.ModuleList(
-            [nn.LayerNorm([op_layers, self.n_ops, h_dim]) 
-             for i in range(n_layers*2)])
-        self.layernorms = nn.ModuleList(
-            [nn.LayerNorm([op_layers, self.n_ops, h_dim]) 
-             for i in range(n_layers*2)])
+            [nn.LayerNorm([h_dim]) for i in range(n_layers*2)])
         self.dropouts = nn.ModuleList(
             [nn.Dropout(dropout_p) for i in range(n_layers)])
 
         # back
-        self.last_layernorm = nn.LayerNorm([op_layers, self.n_ops, h_dim])
+        self.last_layernorm = nn.LayerNorm([h_dim])
         self.to_magnitude = nn.Linear(h_dim, bins)
         self.to_prob = nn.Linear(h_dim*self.n_ops, self.n_ops)
 
@@ -330,12 +325,13 @@ class SGCvD(nn.Module):
         order_emb = self.order_emb(self.order_emb_indices)
 
         # [batch, op_layer, n_ops, h_dim]
-        x = self.op_emb_do(op_emb) + self.order_emb_do(order_emb)
-        x = x.repeat(n_samples, 1, 1, 1)
+        emb = (op_emb + order_emb).repeat(n_samples, 1, 1, 1)
+        x = 0 # emb.repeat(n_samples, 1, 1, 1)
 
         for i in range(self.n_layers):
             # similar to simple conv block
-            org = x
+            x = emb + x
+            org = x # + emb
 
             x = self.fcs[i*2](x)
             x = self.layernorms[i*2](x)
@@ -354,7 +350,7 @@ class SGCvD(nn.Module):
         magnitudes = self.to_magnitude(x)
         magnitudes = nn.functional.softmax(magnitudes, dim=-1)
 
-        is_rand = torch.randint(2, (n_samples, 1, 1, 1))
+        is_rand = (torch.rand(n_samples, 1, 1, 1) < rand_prob).float()
         rand_mag = torch.rand(magnitudes.size())
         rand_mag /= rand_mag.sum(-1, keepdim=True)
         magnitudes = (1-is_rand)*magnitudes + is_rand*rand_mag
@@ -369,15 +365,16 @@ class SGCvD(nn.Module):
         rand_prob /= rand_prob.sum(-1, keepdim=True)
         probs = (1-is_rand)*probs + is_rand*rand_prob
 
-        print(probs.size(), magnitudes.size())
-
         return torch.cat([magnitudes, probs.unsqueeze(-1)], -1)
 
     def calculate_log_probs(self, actions):
-        return actions.log()
+        return actions.clamp(min=EPS).log()
 
     def calculate_entropy(self, actions):
-        return 0
+        # return -actions * actions.clamp(min=EPS).log()
+        log_acts = - actions.clamp(min=EPS).log()
+        return log_acts[..., :-1].mean(-1).sum() \
+              + log_acts[..., -1].mean(-1).sum()
 
     def decode_policy(self, action):
         return RandomApplyDiscrete(self.bag_of_ops, action)
