@@ -5,6 +5,7 @@ from torchvision import transforms
 
 EPS = 1e-5
 
+
 class SGC(nn.Module):
     """ simple and general controller """
     def __init__(self, 
@@ -285,8 +286,8 @@ class SGCvD(nn.Module):
                  op_layers=4, 
                  n_layers=3,
                  h_dim=128,
-                 dropout_p=0.3,
-                 bins=16,
+                 dropout_p=0.4,
+                 bins=21,
                  **kwargs):
         super(SGCvD, self).__init__(**kwargs)
         self.bag_of_ops = bag_of_ops
@@ -303,6 +304,7 @@ class SGCvD(nn.Module):
         # front
         self.op_emb = nn.Embedding(self.n_ops, h_dim) 
         self.order_emb = nn.Embedding(op_layers, h_dim)
+        self.first_dropout = nn.Dropout(dropout_p)
 
         # middle
         self.n_layers = n_layers
@@ -314,11 +316,12 @@ class SGCvD(nn.Module):
             [nn.Dropout(dropout_p) for i in range(n_layers)])
 
         # back
+        self.last_dropout = nn.Dropout(dropout_p)
         self.last_layernorm = nn.LayerNorm([h_dim])
         self.to_magnitude = nn.Linear(h_dim, bins)
         self.to_prob = nn.Linear(h_dim*self.n_ops, self.n_ops)
 
-    def forward(self, x: torch.Tensor, rand_prob=0.):
+    def forward(self, x: torch.Tensor):
         n_samples = x.size(0)
 
         op_emb = self.op_emb(self.op_emb_indices)
@@ -326,11 +329,11 @@ class SGCvD(nn.Module):
 
         # [batch, op_layer, n_ops, h_dim]
         emb = (op_emb + order_emb).repeat(n_samples, 1, 1, 1)
-        x = 0 # emb.repeat(n_samples, 1, 1, 1)
+        x = self.first_dropout(emb) # 0 # emb.repeat(n_samples, 1, 1, 1)
 
         for i in range(self.n_layers):
             # similar to simple conv block
-            x = emb + x
+            # x = emb + x
             org = x # + emb
 
             x = self.fcs[i*2](x)
@@ -344,37 +347,43 @@ class SGCvD(nn.Module):
             x = x + org
             x = x * x.sigmoid() # swish
 
+        x = self.last_dropout(x)
         x = self.last_layernorm(x)
 
         # [batch, op_layer, n_ops, bins]
         magnitudes = self.to_magnitude(x)
-        magnitudes = nn.functional.softmax(magnitudes, dim=-1)
-
-        is_rand = (torch.rand(n_samples, 1, 1, 1) < rand_prob).float()
-        rand_mag = torch.rand(magnitudes.size())
-        rand_mag /= rand_mag.sum(-1, keepdim=True)
-        magnitudes = (1-is_rand)*magnitudes + is_rand*rand_mag
+        magnitudes = magnitudes.softmax(-1)
 
         # [batch, op_layer, n_ops, 1]
         probs = x.view(-1, self.op_layers, self.n_ops*self.h_dim)
         probs = self.to_prob(probs)
-        probs = nn.functional.softmax(probs, dim=-1)
-
-        is_rand = is_rand.squeeze(-1)
-        rand_prob = torch.rand(probs.size())
-        rand_prob /= rand_prob.sum(-1, keepdim=True)
-        probs = (1-is_rand)*probs + is_rand*rand_prob
+        probs = probs.softmax(-1)
 
         return torch.cat([magnitudes, probs.unsqueeze(-1)], -1)
 
     def calculate_log_probs(self, actions):
-        return actions.clamp(min=EPS).log()
+        # layer*(n_ops + 1) actions
+        # actions: [..., layer, op, bins+1]
+        # outputs: [..., layer, op+1]
+        log_actions = actions.clamp(min=EPS).log()
+        magnitudes = log_actions[..., :-1] # [..., layer, op, bins]
+        probs = log_actions[..., -1] # [..., layer, op]
+
+        magnitudes = magnitudes.sum(-1) # [..., layer, op]
+        probs = probs.sum(-1, keepdim=True) # [..., layer, 1]
+
+        return torch.cat([magnitudes, probs], -1)
 
     def calculate_entropy(self, actions):
-        # return -actions * actions.clamp(min=EPS).log()
-        log_acts = - actions.clamp(min=EPS).log()
-        return log_acts[..., :-1].mean(-1).sum() \
-              + log_acts[..., -1].mean(-1).sum()
+        # actions: [..., layer, op, bins+1]
+        neg_plogp = -actions * actions.clamp(min=EPS).log()
+        magnitudes = neg_plogp[..., :-1] # [..., layer, op, bins]
+        probs = neg_plogp[..., -1] # [..., layer, op]
+
+        magnitudes = magnitudes.sum(-1) # [..., layer, op]
+        probs = probs.sum(-1, keepdim=True) # [..., layer, 1]
+
+        return torch.cat([magnitudes, probs], -1)
 
     def decode_policy(self, action):
         return RandomApplyDiscrete(self.bag_of_ops, action)
@@ -434,16 +443,12 @@ if __name__ == '__main__':
     print(sum([p.numel() for p in brain.parameters()]))
 
     x = torch.zeros(2)
-    actions = brain(x, rand_prob=0.)
-    print(actions) # .size())
-
-    '''
-    log_prob = brain.calculate_log_probs(action, prob)
-    entropy = brain.calculate_entropy(prob)
-    '''
+    actions = brain(x)
+    probs = brain.calculate_log_probs(actions).exp()
+    print(probs[0] / probs[1])
 
     policy = brain.decode_policy(actions[0])
     y = torch.rand((32, 3, 32, 32))
-    for i in range(5):
+    for i in range(3):
         print(policy(y).size())
 

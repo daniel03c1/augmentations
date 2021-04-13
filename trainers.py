@@ -66,12 +66,24 @@ class Trainer:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
-                rand_prob = max(0, 1 - epoch / (n_epochs//4))
-                actions = self.rl_agent.act(states, rand_prob)
+                rand_prob = max(0, (1 - epoch / (n_epochs//2)))
+                actions = self.rl_agent.act(states)
 
-                # for test
-                # from torchsummary import summary
-                # summary(self.rl_agent.net, states.shape)
+                if rand_prob > 0:
+                    is_rand = (torch.rand(self.M, 1, 1, 1) < rand_prob).float()
+
+                    magnitudes = actions[..., :-1]
+                    rand_mag = torch.rand(magnitudes.size())
+                    rand_mag /= rand_mag.sum(-1, keepdim=True)
+                    magnitudes = (1-is_rand)*magnitudes + is_rand*rand_mag
+
+                    is_rand = is_rand.squeeze(-1)
+                    probs = actions[..., -1]
+                    rand_prob = torch.ones_like(probs) 
+                    rand_prob /= rand_prob.sum(-1, keepdim=True)
+                    probs = (1-is_rand)*probs + is_rand*rand_prob
+
+                    actions = torch.cat([magnitudes, probs.unsqueeze(-1)], -1)
 
                 policies = [self.rl_agent.decode_policy(action) 
                             for action in actions]
@@ -182,29 +194,40 @@ class Trainer:
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
-                rewards = rewards.view(-1, 1, 1, 1) # TODO: remove this
+                rewards = rewards.view(-1, 1, 1, 1)
                 self.rl_agent.cache_batch(
                     states, actions, rewards, states)
                 self.rl_agent.learn(n_steps=self.rl_n_steps)
                 self.rl_agent.apply_gamma(self.deprecation_rate)
                 self.rl_agent.save()
 
-                # [layer, ops, bins+1]
-                actions = self.rl_agent.act(torch.zeros(1), train=False)[0] 
-                image = actions.transpose(-1, -2) # [layer, bins+1, ops]
-                image = image.reshape(-1, image.size(-1))
+                # [8, layer, ops, bins+1]
+                # [layers*(bins+1), 4 * ops]
+                image = self.rl_agent.act(torch.zeros(4))
+                image = image.transpose(0, 1) # [layer, 4, ops, bins+1]
+                image = image.transpose(-3, -1) # [layer, bins+1, ops, 4]
+                image = image.reshape(-1, image.size(-2)*image.size(-1))
                 self.writer.add_image('output', image, epoch, dataformats='HW')
 
+                # [layer, ops, bins+1]
+                actions = self.rl_agent.act(torch.zeros(1), train=False)[0] 
                 n_ops = actions.size(-2)
+
                 zeros = torch.mean(actions[:, -2, -1]) * n_ops
+                self.writer.add_scalar('diag/zeros', zeros, epoch)
+                print(f'zeros: {zeros}')
+
                 bins = actions.size(-1) - 1
                 danger_mag = torch.sum(actions[:, -1, :int(0.75 * bins)], -1)
                 danger_mag = danger_mag.mean()
                 danger_prob = torch.mean(actions[:, -1, -1]) * n_ops
-                self.writer.add_scalar('diag/zeros', zeros, epoch)
                 self.writer.add_scalar('diag/danger_mag', danger_mag, epoch)
                 self.writer.add_scalar('diag/danger_prob', danger_prob, epoch)
-                print(f'zeros: {zeros}, danger: ({danger_mag}, {danger_prob})')
+                print(f'danger: ({danger_mag}, {danger_prob})')
+
+                ent = self.rl_agent.net.calculate_entropy(actions).mean()
+                self.writer.add_scalar('diag/ent', ent, epoch)
+                print(f'ent: {ent}')
 
         self.writer.add_hparams(
             {'hp/M': self.M, 'hp/rl_n_steps': self.rl_n_steps},
