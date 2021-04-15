@@ -286,7 +286,7 @@ class SGCvD(nn.Module):
                  op_layers=4, 
                  n_layers=3,
                  h_dim=128,
-                 dropout_p=0.4,
+                 dropout_p=0.5,
                  bins=21,
                  **kwargs):
         super(SGCvD, self).__init__(**kwargs)
@@ -376,6 +376,7 @@ class SGCvD(nn.Module):
 
     def calculate_entropy(self, actions):
         # actions: [..., layer, op, bins+1]
+        '''
         neg_plogp = -actions * actions.clamp(min=EPS).log()
         magnitudes = neg_plogp[..., :-1] # [..., layer, op, bins]
         probs = neg_plogp[..., -1] # [..., layer, op]
@@ -384,6 +385,12 @@ class SGCvD(nn.Module):
         probs = probs.sum(-1, keepdim=True) # [..., layer, 1]
 
         return torch.cat([magnitudes, probs], -1)
+        '''
+        mean = actions.mean(0, keepdim=True)
+        ent = (actions - mean).abs()
+        return torch.cat([ent[..., :-1].mean(-1),
+                          ent[..., -1].mean(-1, keepdim=True)],
+                         -1)
 
     def decode_policy(self, action):
         return RandomApplyDiscrete(self.bag_of_ops, action)

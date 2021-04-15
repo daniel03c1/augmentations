@@ -66,7 +66,7 @@ class Trainer:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
-                rand_prob = max(0, (1 - epoch / (n_epochs//2)))
+                rand_prob = max(0, 0.5*(1 - epoch / (n_epochs//2)))
                 actions = self.rl_agent.act(states)
 
                 if rand_prob > 0:
@@ -79,7 +79,8 @@ class Trainer:
 
                     is_rand = is_rand.squeeze(-1)
                     probs = actions[..., -1]
-                    rand_prob = torch.ones_like(probs) 
+                    # torch.ones_like(probs) 
+                    rand_prob = torch.rand(probs.size()) 
                     rand_prob /= rand_prob.sum(-1, keepdim=True)
                     probs = (1-is_rand)*probs + is_rand*rand_prob
 
@@ -203,10 +204,15 @@ class Trainer:
 
                 # [8, layer, ops, bins+1]
                 # [layers*(bins+1), 4 * ops]
+                '''
                 image = self.rl_agent.act(torch.zeros(4))
                 image = image.transpose(0, 1) # [layer, 4, ops, bins+1]
                 image = image.transpose(-3, -1) # [layer, bins+1, ops, 4]
                 image = image.reshape(-1, image.size(-2)*image.size(-1))
+                '''
+                image = self.rl_agent.act(torch.zeros(1))[0] # [layer, ops, ..]
+                image = image.transpose(-2, -1)
+                image = image.reshape(-1, image.size(-1))
                 self.writer.add_image('output', image, epoch, dataformats='HW')
 
                 # [layer, ops, bins+1]
@@ -225,6 +231,7 @@ class Trainer:
                 self.writer.add_scalar('diag/danger_prob', danger_prob, epoch)
                 print(f'danger: ({danger_mag}, {danger_prob})')
 
+                actions = self.rl_agent.act(torch.zeros(8))[0] 
                 ent = self.rl_agent.net.calculate_entropy(actions).mean()
                 self.writer.add_scalar('diag/ent', ent, epoch)
                 print(f'ent: {ent}')

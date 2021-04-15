@@ -139,12 +139,12 @@ class DiscretePPOAgent:
         self.ent_coef = ent_coef
         self.augmentation = augmentation
 
-    def act(self, states, rand_prob=0., train=True, **kwargs):
+    def act(self, states, train=True, **kwargs):
         if train:
             self.net.train()
         else:
             self.net.eval()
-        return self.net(states, rand_prob, **kwargs)
+        return self.net(states, **kwargs)
 
     def cache(self, state, action, reward, next_state):
         self.memory.append((state.to(self.device), 
@@ -171,15 +171,12 @@ class DiscretePPOAgent:
 
             actions = self.net(states)
 
-            # TODO: precalculate log_probs of dists
             ratios = self.net.calculate_log_probs(actions) \
                    - self.net.calculate_log_probs(old_actions).detach()
-            # for stability
-            ratios = torch.exp(torch.clamp(ratios, -10, 10))
 
             loss = -torch.min(
                 ratios*rewards,
-                torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon)*rewards)
+                ratios.clamp(1-self.epsilon, 1+self.epsilon)*rewards)
             loss -= self.ent_coef * self.net.calculate_entropy(actions)
 
             torch.mean(loss).backward(retain_graph=True)

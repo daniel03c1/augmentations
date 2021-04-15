@@ -71,7 +71,7 @@ def main(config, **kwargs):
     ppo = DiscretePPOAgent(c, name=f'{config.name}_ppo.pt', 
                            mem_maxlen=config.mem_size*config.M,
                            batch_size=config.M, 
-                           ent_coef=1e-3,
+                           ent_coef=config.ent_coef,
                            device=torch.device('cpu'))
 
     trainer = Trainer(model=model,
@@ -79,7 +79,7 @@ def main(config, **kwargs):
                       criterion=criterion,
                       name=config.name,
                       bag_of_ops=bag_of_ops,
-                      rl_n_steps=4, 
+                      rl_n_steps=config.rl_steps, 
                       deprecation_rate=config.gamma,
                       M=config.M, 
                       normalize=normalize,
@@ -100,8 +100,10 @@ if __name__ == '__main__':
     args = argparse.ArgumentParser()
     args.add_argument('--name', type=str, required=True)
     args.add_argument('--epochs', type=int, default=200)
-    args.add_argument('--M', type=int, default=16)
-    args.add_argument('--mem_size', type=int, default=3)
+    args.add_argument('--M', type=int, default=8)
+    args.add_argument('--mem_size', type=int, default=1)
+    args.add_argument('--rl_steps', type=int, default=2)
+    args.add_argument('--ent_coef', type=float, default=1e-5)
     args.add_argument('--gamma', type=float, default=1.)
     args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--dataset', type=str, default='cifar100')
