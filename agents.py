@@ -213,3 +213,134 @@ class DiscretePPOAgent:
             reward *= gamma
             self.cache(state, action, reward, next_state)
 
+
+class DiscretePPOAgentv2:
+    def __init__(self, 
+                 controller: nn.Module, 
+                 valuator: nn.Module, 
+                 name: str,
+                 lr=0.00035,
+                 grad_norm=0.5,
+                 batch_size=1, 
+                 epsilon=0.2,
+                 ent_coef=1e-5,
+                 device=None,
+                 **args):
+        print(**args)
+        if device:
+            self.device = device
+        else:
+            self.device = get_default_device()
+        self.controller = net.to(self.device)
+        self.valuator = valuator.to(self.device)
+
+        self.name = name
+        self.c_optimizer = optim.Adam(self.controller.parameters(), lr=lr)
+        self.v_optimizer = optim.Adam(self.valuator.parameters(), lr=lr)
+        self.v_criterion = nn.L1Loss()
+        self.grad_norm = grad_norm
+
+        self.sample_memory = deque()
+        self.batch_memory = deque()
+        self.batch_size = batch_size
+        self.epsilon = epsilon
+        self.ent_coef = ent_coef
+
+    def act(self, states, train=True, **kwargs):
+        if train:
+            self.controller.train()
+        else:
+            self.controller.eval()
+        return self.controller(states, **kwargs)
+
+    def cache(self, state, action, reward, next_state):
+        self.sample_memory.append((state.to(self.device), 
+                                   action.to(self.device).detach(),
+                                   reward.to(self.device), 
+                                   next_state.to(self.device)))
+
+    def cache_batch(self, states, actions, rewards, next_states):
+        for i in range(states.size(0)):
+            self.cache(states[i], actions[i], rewards[i], 
+                       next_states[i])
+
+        self.batch_memory.append((states.to(self.device),
+                                  actions.to(self.device),
+                                  rewards.to(self.device),
+                                  next_states.to(self.device)))
+
+    def learn(self, n_steps=1):
+        # train valuator
+        self.valuator.train()
+        epochs = len(self.batch_memory)
+
+        while True:
+            total_loss = 0
+
+            for i in range(epochs):
+                # x: actions, y: rewards
+                _, xs, ys, _ = random.sample(self.batch_memory, 1)[0]
+
+                self.v_optimizer.zero_grad()
+                with torch.set_grad_enabled(True):
+                    ys_hat = self.model(xs)[..., 0]
+                    ys_hat = (ys_hat - ys_hat.mean(keepdim=True)) \
+                           / ys_hat.std(keepdim=True).clamp(min=1e-8)
+                    loss = self.v_criterion(ys_hat, ys)
+
+                    loss.backward()
+                    self.v_optimizer.step()
+
+                    total_loss += (loss - total_loss) / (1+i)
+
+            if total_loss < 1e-2:
+                break
+        self.valuator.eval()
+
+        # train controller
+        self.controller.train()
+
+        for i in range(n_steps):
+            self.optimizer.zero_grad()
+
+            _, old_actions, rewards, _ = self.recall()
+            rewards = self.valuator(old_actions)[..., 0]
+            rewards = (rewards - rewards.mean(keepdim=True) \
+                    / rewards.std(keepdim=True).clamp(min=1e-8)
+
+            actions = self.controller(states)
+
+            ratios = self.controller.calculate_log_probs(actions) \
+                   - self.controller.calculate_log_probs(old_actions).detach()
+
+            loss = -torch.min(
+                ratios*rewards,
+                ratios.clamp(1-self.epsilon, 1+self.epsilon)*rewards)
+            loss -= self.ent_coef * self.controller.calculate_entropy(actions)
+
+            torch.mean(loss).backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.controller.parameters(), 
+                                           self.grad_norm)
+            self.optimizer.step()
+
+        return loss # the last loss
+
+    def recall(self):
+        batch = random.sample(self.sample_memory, self.batch_size)
+        states, actions, rewards, next_states = map(
+            torch.stack, zip(*batch))
+        return states, actions, rewards, next_states
+
+    def clear_memory(self):
+        self.sample_memory.clear()
+
+    def save(self, name=None):
+        if not name:
+            name = self.name
+        if not name.endswith('.pt'):
+            name += '.pt'
+        torch.save(self.controller.state_dict(), name)
+
+    def decode_policy(self, *args, **kwargs):
+        return self.controller.decode_policy(*args, **kwargs)
+
