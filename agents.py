@@ -219,6 +219,8 @@ class DiscretePPOAgentv2:
                  controller: nn.Module, 
                  valuator: nn.Module, 
                  name: str,
+                 mem_maxlen: int,
+                 batch_mem_maxlen: int,
                  lr=0.00035,
                  grad_norm=0.5,
                  batch_size=1, 
@@ -231,17 +233,17 @@ class DiscretePPOAgentv2:
             self.device = device
         else:
             self.device = get_default_device()
-        self.controller = net.to(self.device)
+        self.controller = controller.to(self.device)
         self.valuator = valuator.to(self.device)
 
         self.name = name
         self.c_optimizer = optim.Adam(self.controller.parameters(), lr=lr)
-        self.v_optimizer = optim.Adam(self.valuator.parameters(), lr=lr)
+        self.v_optimizer = optim.Adam(self.valuator.parameters(), weight_decay=1e-5)
         self.v_criterion = nn.L1Loss()
         self.grad_norm = grad_norm
 
-        self.sample_memory = deque()
-        self.batch_memory = deque()
+        self.sample_memory = deque(maxlen=mem_maxlen * batch_size)
+        self.batch_memory = deque(maxlen=batch_mem_maxlen)
         self.batch_size = batch_size
         self.epsilon = epsilon
         self.ent_coef = ent_coef
@@ -265,8 +267,8 @@ class DiscretePPOAgentv2:
                        next_states[i])
 
         self.batch_memory.append((states.to(self.device),
-                                  actions.to(self.device),
-                                  rewards.to(self.device),
+                                  actions.to(self.device).detach(),
+                                  rewards.to(self.device).detach(),
                                   next_states.to(self.device)))
 
     def learn(self, n_steps=1):
@@ -283,17 +285,16 @@ class DiscretePPOAgentv2:
 
                 self.v_optimizer.zero_grad()
                 with torch.set_grad_enabled(True):
-                    ys_hat = self.model(xs)[..., 0]
-                    ys_hat = (ys_hat - ys_hat.mean(keepdim=True)) \
-                           / ys_hat.std(keepdim=True).clamp(min=1e-8)
+                    ys_hat = self.valuator(xs)[..., 0]
+                    ys_hat = (ys_hat - ys_hat.mean()) / ys_hat.std().clamp(min=1e-8)
                     loss = self.v_criterion(ys_hat, ys)
 
-                    loss.backward()
+                    loss.backward(retain_graph=True)
                     self.v_optimizer.step()
 
-                    total_loss += (loss - total_loss) / (1+i)
+                    total_loss += (loss.detach() - total_loss) / (1+i)
 
-            if total_loss < 1e-2:
+            if total_loss < 1e-1:
                 break
         self.valuator.eval()
 
@@ -301,27 +302,30 @@ class DiscretePPOAgentv2:
         self.controller.train()
 
         for i in range(n_steps):
-            self.optimizer.zero_grad()
+            self.c_optimizer.zero_grad()
 
-            _, old_actions, rewards, _ = self.recall()
+            states, old_actions, rewards, _ = self.recall()
             rewards = self.valuator(old_actions)[..., 0]
-            rewards = (rewards - rewards.mean(keepdim=True) \
-                    / rewards.std(keepdim=True).clamp(min=1e-8)
+            rewards = (rewards - rewards.mean()) / rewards.std().clamp(min=1e-8)
 
             actions = self.controller(states)
 
+            # PPO
             ratios = self.controller.calculate_log_probs(actions) \
                    - self.controller.calculate_log_probs(old_actions).detach()
+            rewards = rewards.view(-1, *([1]*(len(ratios.shape)-1)))
 
             loss = -torch.min(
                 ratios*rewards,
                 ratios.clamp(1-self.epsilon, 1+self.epsilon)*rewards)
+
+            # REINFORCE
             loss -= self.ent_coef * self.controller.calculate_entropy(actions)
 
             torch.mean(loss).backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.controller.parameters(), 
                                            self.grad_norm)
-            self.optimizer.step()
+            self.c_optimizer.step()
 
         return loss # the last loss
 

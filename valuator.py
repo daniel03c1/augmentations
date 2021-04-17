@@ -24,6 +24,7 @@ class Valuator(nn.Module):
 
         self.op_bins_fc = nn.Linear(op_layers*n_bins, op_bins_dim)
         self.op_bins_norm = norm_layer([op_bins_dim])
+        self.op_bins_relu = nn.ReLU()
 
         self.fcs = nn.ModuleList(
             [nn.Linear(h_dim, h_dim)
@@ -31,6 +32,8 @@ class Valuator(nn.Module):
              for i in range(depth)])
         self.norms = nn.ModuleList(
             [norm_layer([h_dim]) for i in range(depth)])
+        self.relus = nn.ModuleList(
+            [nn.ReLU() for i in range(depth)])
 
         self.final_fc = nn.Linear(h_dim, 1)
 
@@ -40,13 +43,13 @@ class Valuator(nn.Module):
 
         x = self.op_bins_fc(x)
         x = self.op_bins_norm(x)
-        x = nn.functional.relu(x)
+        x = self.op_bins_relu(x)
 
         x = x.reshape(-1, x.size(-2) * x.size(-1))
         for i in range(self.depth):
             x = self.fcs[i](x)
             x = self.norms[i](x)
-            x = nn.functional.relu(x)
+            x = self.relus[i](x)
 
         x = self.final_fc(x)
         return x

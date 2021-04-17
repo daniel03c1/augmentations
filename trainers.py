@@ -66,7 +66,7 @@ class Trainer:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
                 states = torch.zeros(self.M)
-                rand_prob = max(0, 0.5*(1 - epoch / (n_epochs//2)))
+                rand_prob = max(0, (1 - epoch / (n_epochs//4)))
                 actions = self.rl_agent.act(states)
 
                 if rand_prob > 0:
@@ -195,11 +195,11 @@ class Trainer:
                 assert torch.isnan(rewards).sum() == 0
 
                 # normalize rewards for stable training
-                rewards = rewards.view(-1, 1, 1, 1)
+                # rewards = rewards.view(-1, 1, 1, 1)
                 self.rl_agent.cache_batch(
                     states, actions, rewards, states)
                 self.rl_agent.learn(n_steps=self.rl_n_steps)
-                self.rl_agent.apply_gamma(self.deprecation_rate)
+                # self.rl_agent.apply_gamma(self.deprecation_rate)
                 self.rl_agent.save()
 
                 # [8, layer, ops, bins+1]
@@ -231,8 +231,8 @@ class Trainer:
                 self.writer.add_scalar('diag/danger_prob', danger_prob, epoch)
                 print(f'danger: ({danger_mag}, {danger_prob})')
 
-                actions = self.rl_agent.act(torch.zeros(8))[0] 
-                ent = self.rl_agent.net.calculate_entropy(actions).mean()
+                actions = self.rl_agent.act(torch.zeros(32))[0] 
+                ent = self.rl_agent.controller.calculate_entropy(actions).mean()
                 self.writer.add_scalar('diag/ent', ent, epoch)
                 print(f'ent: {ent}')
 

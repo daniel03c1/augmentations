@@ -6,12 +6,13 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.optim import lr_scheduler
 
-from agents import DiscretePPOAgent
+from agents import *
 from augments import RandAugment
 from controllers import *
 from dataloader import *
-from trainers import Trainer
 from discrete_transforms import transforms as bag_of_ops
+from trainers import Trainer
+from valuator import *
 from wideresnet import WideResNet
 
 
@@ -66,13 +67,16 @@ def main(config, **kwargs):
                           weight_decay=5e-4)
 
     # RL
-    c = SGCvD(bag_of_ops, op_layers=2)
-    c_optimizer = optim.Adam(c.parameters(), lr=0.035)
-    ppo = DiscretePPOAgent(c, name=f'{config.name}_ppo.pt', 
-                           mem_maxlen=config.mem_size*config.M,
-                           batch_size=config.M, 
-                           ent_coef=config.ent_coef,
-                           device=torch.device('cpu'))
+    c = SGCvD(bag_of_ops, op_layers=config.op_layers, bins=config.bins)
+    v = Valuator([config.op_layers, bag_of_ops.n_ops, config.bins+1])
+    ppo = DiscretePPOAgentv2(c, 
+                             v, 
+                             name=f'{config.name}_ppo.pt', 
+                             mem_maxlen=config.mem_size,
+                             batch_mem_maxlen=config.batch_mem_size,
+                             batch_size=config.M, 
+                             ent_coef=config.ent_coef,
+                             device=torch.device('cpu'))
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
@@ -99,9 +103,12 @@ if __name__ == '__main__':
 
     args = argparse.ArgumentParser()
     args.add_argument('--name', type=str, required=True)
+    args.add_argument('--op_layers', type=int, default=2)
+    args.add_argument('--bins', type=int, default=17)
     args.add_argument('--epochs', type=int, default=200)
     args.add_argument('--M', type=int, default=8)
     args.add_argument('--mem_size', type=int, default=1)
+    args.add_argument('--batch_mem_size', type=int, default=1)
     args.add_argument('--rl_steps', type=int, default=2)
     args.add_argument('--ent_coef', type=float, default=1e-5)
     args.add_argument('--gamma', type=float, default=1.)
