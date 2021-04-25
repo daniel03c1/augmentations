@@ -48,22 +48,21 @@ def get_default_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-'''
-activation = {}
-def get_activation(name):
-    def hook(model, input, output):
-        activation[name] = output.detach()
-    return hook
+def linear_resize(src, des_dim):
+    return src.matmul(lin_mapping_matrix(src.size(-1), 
+                                         des_dim, 
+                                         device=src.device))
 
 
-x = torch.rand(4, 3, 32, 32)
-model = torchvision.models.resnet18(pretrained=False)
-avg = model.avgpool.register_forward_hook(get_activation('avgpool'))
+def lin_mapping_matrix(src_dim, des_dim, device=None):
+    result = torch.linspace(0, src_dim-1, des_dim, device=device)
+    result = result.repeat(src_dim, 1) \
+           - torch.arange(0, src_dim, device=device).unsqueeze(-1)
+    result = result.abs()
+    result = torch.where(result <= 1, 1-result, torch.zeros_like(result))
+    return result
 
-out = model(x)
-print(out)
-print(model.fc(activation['avgpool'].squeeze()))
 
-avg.remove() # detach hooks
-'''
+def standard_normalization(x, eps=1e-8):
+    return (x - x.mean()) / x.std().clamp(min=eps)
 

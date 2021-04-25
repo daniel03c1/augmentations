@@ -15,6 +15,8 @@ from trainers import Trainer
 from valuator import *
 from wideresnet import WideResNet
 
+torch.backends.cudnn.benchmark = True
+
 
 def main(config, **kwargs):
     ''' DATASETS '''
@@ -49,13 +51,14 @@ def main(config, **kwargs):
     for mode in ['train', 'val']:
         dataloaders[mode] = dataset(config.data_path,
                                     train=mode == 'train',
-                                    transform=data_transforms[mode])
+                                    transform=data_transforms[mode],
+                                    download=True)
         dataloaders[mode] = torch.utils.data.DataLoader(
             dataloaders[mode],
             batch_size=config.batch_size,
             shuffle=mode=='train',
             drop_last=True,
-            num_workers=6)
+            num_workers=4)
 
     ''' TRAINING '''
     # model
@@ -66,17 +69,8 @@ def main(config, **kwargs):
                           nesterov=True,
                           weight_decay=5e-4)
 
-    # RL
-    c = SGCvD(bag_of_ops, op_layers=config.op_layers, bins=config.bins)
-    v = Valuator([config.op_layers, bag_of_ops.n_ops, config.bins+1])
-    ppo = DiscretePPOAgentv2(c, 
-                             v, 
-                             name=f'{config.name}_ppo.pt', 
-                             mem_maxlen=config.mem_size,
-                             batch_mem_maxlen=config.batch_mem_size,
-                             batch_size=config.M, 
-                             ent_coef=config.ent_coef,
-                             device=torch.device('cpu'))
+    v = Valuator([bag_of_ops.n_ops, config.bins+config.n_transforms])
+    agent = EvolveAgent(v, bag_of_ops, n_transforms=2)
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
@@ -87,7 +81,7 @@ def main(config, **kwargs):
                       deprecation_rate=config.gamma,
                       M=config.M, 
                       normalize=normalize,
-                      rl_agent=ppo)
+                      agent=agent)
 
     print(bag_of_ops.ops)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
@@ -103,8 +97,8 @@ if __name__ == '__main__':
 
     args = argparse.ArgumentParser()
     args.add_argument('--name', type=str, required=True)
-    args.add_argument('--op_layers', type=int, default=2)
-    args.add_argument('--bins', type=int, default=17)
+    args.add_argument('--n_transforms', type=int, default=2)
+    args.add_argument('--bins', type=int, default=11)
     args.add_argument('--epochs', type=int, default=200)
     args.add_argument('--M', type=int, default=8)
     args.add_argument('--mem_size', type=int, default=1)
@@ -119,4 +113,3 @@ if __name__ == '__main__':
     config = args.parse_args()
 
     main(config)
-

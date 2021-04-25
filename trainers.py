@@ -5,6 +5,7 @@ import torchvision
 import torch.nn.functional as F
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
+import tqdm
 
 from utils import get_default_device
 from utils import RunningStats
@@ -17,7 +18,7 @@ class Trainer:
                  criterion, 
                  name: str,
                  bag_of_ops,
-                 rl_agent=None,
+                 agent=None,
                  M=8,
                  rl_n_steps=16,
                  deprecation_rate=1.,
@@ -34,11 +35,13 @@ class Trainer:
         self.name = name
         self.best_acc = 0
 
-        self.rl_agent = rl_agent
+        self.agent = agent
         self.rl_n_steps = rl_n_steps
         self.deprecation_rate = deprecation_rate
+        self.n_transforms = None if not agent else agent.n_transforms
 
         self.bag_of_ops = bag_of_ops
+        self.n_ops = bag_of_ops.n_ops
         self.M = M
         self.random_erasing = torchvision.transforms.RandomErasing(
             p=1, scale=(0.25, 0.25), ratio=(1., 1.))
@@ -49,8 +52,6 @@ class Trainer:
 
     def fit(self, train_dataloader, test_dataloader=None, 
             n_epochs=200, scheduler=None):
-        chan_axis = 1
-
         activation = {}
         def get_activation(name):
             def hook(model, input, output):
@@ -58,37 +59,13 @@ class Trainer:
             return hook
         hook = self.model.fc.register_forward_hook(get_activation('fc'))
 
-        self.stats.clear()
-
         for epoch in range(n_epochs):
-            # for RL
-            if self.rl_agent:
+            if self.agent:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
-                states = torch.zeros(self.M)
-                rand_prob = max(0, (1 - epoch / (n_epochs//4)))
-                actions = self.rl_agent.act(states)
-
-                if rand_prob > 0:
-                    is_rand = (torch.rand(self.M, 1, 1, 1) < rand_prob).float()
-
-                    magnitudes = actions[..., :-1]
-                    rand_mag = torch.rand(magnitudes.size())
-                    rand_mag /= rand_mag.sum(-1, keepdim=True)
-                    magnitudes = (1-is_rand)*magnitudes + is_rand*rand_mag
-
-                    is_rand = is_rand.squeeze(-1)
-                    probs = actions[..., -1]
-                    # torch.ones_like(probs) 
-                    rand_prob = torch.rand(probs.size()) 
-                    rand_prob /= rand_prob.sum(-1, keepdim=True)
-                    probs = (1-is_rand)*probs + is_rand*rand_prob
-
-                    actions = torch.cat([magnitudes, probs.unsqueeze(-1)], -1)
-
-                policies = [self.rl_agent.decode_policy(action) 
+                actions = self.agent.act([0] * self.M)
+                policies = [self.agent.decode_policy(action, resize=False)
                             for action in actions]
-
                 self.stats.clear()
 
             total_loss = 0
@@ -101,18 +78,17 @@ class Trainer:
 
                 xs = xs.to(self.device)
                 ys = ys.to(self.device)
-                
+
                 # subdivide into M parts
                 batch_size = xs.size(0)
-
                 org_step = 8
                 org_xs = xs[::org_step]
 
-                if self.rl_agent:
+                if self.agent:
                     mini_size = batch_size // self.M
 
                     xs = torch.cat(
-                        [policy(xs[i*mini_size:(i+1)*mini_size]) 
+                        [policy(xs[i*mini_size:(i+1)*mini_size])
                             for i, policy in enumerate(policies)],
                         dim=0)
                     xs = self.random_erasing(xs)
@@ -121,7 +97,6 @@ class Trainer:
                     xs = self.normalize(xs)
                     org_xs = self.normalize(org_xs)
 
-                # training
                 self.optimizer.zero_grad()
                 with torch.set_grad_enabled(True):
                     ys_hat = self.model(xs)
@@ -130,7 +105,7 @@ class Trainer:
                     loss[:batch_size].mean().backward()
                     self.optimizer.step()
 
-                if self.rl_agent:
+                if self.agent:
                     augs = activation['fc'][0].detach()[:batch_size:org_step]
 
                     self.model.eval()
@@ -144,10 +119,8 @@ class Trainer:
                     for i in range(dists.size(1)):
                         self.stats.push(dists[:, i])
 
-                    # original losses
                     loss = loss.detach()
-                    losses = 0.95 * losses \
-                           + 0.05 * loss.reshape(self.M, -1).mean(1)
+                    losses = 0.95 * losses + 0.05 * loss.reshape(self.M, -1).mean(1)
 
                 # metrics
                 pred_cls = torch.argmax(ys_hat, -1)
@@ -178,7 +151,8 @@ class Trainer:
             if scheduler:
                 scheduler.step()
 
-            if self.rl_agent:
+            if self.agent:
+                # summarize the epoch
                 mean = self.stats.mean().square().sum(-1).sqrt()
                 std = self.stats.std().square().sum(-1).sqrt()
                 coef = mean / (std + 1e-8)
@@ -188,53 +162,30 @@ class Trainer:
                 self.writer.add_histogram('coef', coef, epoch)
                 self.writer.add_histogram('losses', losses, epoch)
 
-                losses = (losses - losses.mean()) / (losses.std() + 1e-8)
-                # coef = (coef - coef.mean()) / (coef.std() + 1e-8)
+                losses = (losses - losses.mean()) / losses.std().clamp(min=1e-8)
 
                 rewards = -losses # - 4*coef
-                assert torch.isnan(rewards).sum() == 0
+                self.agent.update(actions, rewards)
 
-                # normalize rewards for stable training
-                # rewards = rewards.view(-1, 1, 1, 1)
-                self.rl_agent.cache_batch(
-                    states, actions, rewards, states)
-                self.rl_agent.learn(n_steps=self.rl_n_steps)
-                # self.rl_agent.apply_gamma(self.deprecation_rate)
-                self.rl_agent.save()
-
-                # [8, layer, ops, bins+1]
-                # [layers*(bins+1), 4 * ops]
-                '''
-                image = self.rl_agent.act(torch.zeros(4))
-                image = image.transpose(0, 1) # [layer, 4, ops, bins+1]
-                image = image.transpose(-3, -1) # [layer, bins+1, ops, 4]
-                image = image.reshape(-1, image.size(-2)*image.size(-1))
-                '''
-                image = self.rl_agent.act(torch.zeros(1))[0] # [layer, ops, ..]
-                image = image.transpose(-2, -1)
-                image = image.reshape(-1, image.size(-1))
+                # save image
+                image = self.agent.act([1])[0]
                 self.writer.add_image('output', image, epoch, dataformats='HW')
 
-                # [layer, ops, bins+1]
-                actions = self.rl_agent.act(torch.zeros(1), train=False)[0] 
-                n_ops = actions.size(-2)
+                # [n_ops, bins+n_transforms]
+                action = self.agent.preprocess_action(
+                    self.agent.act(torch.zeros(1), train=False)[0])
+                n_ops = action.size(-2)
 
-                zeros = torch.mean(actions[:, -2, -1]) * n_ops
+                zeros = torch.mean(action[-2, -self.n_transforms:]) * n_ops
                 self.writer.add_scalar('diag/zeros', zeros, epoch)
                 print(f'zeros: {zeros}')
 
-                bins = actions.size(-1) - 1
-                danger_mag = torch.sum(actions[:, -1, :int(0.75 * bins)], -1)
-                danger_mag = danger_mag.mean()
-                danger_prob = torch.mean(actions[:, -1, -1]) * n_ops
+                bins = action.size(-1) - self.n_transforms
+                danger_mag = torch.sum(action[-1, :int(0.75 * bins)])
+                danger_prob = torch.mean(action[-1, -self.n_transforms:]) * n_ops
                 self.writer.add_scalar('diag/danger_mag', danger_mag, epoch)
                 self.writer.add_scalar('diag/danger_prob', danger_prob, epoch)
                 print(f'danger: ({danger_mag}, {danger_prob})')
-
-                actions = self.rl_agent.act(torch.zeros(32))[0] 
-                ent = self.rl_agent.controller.calculate_entropy(actions).mean()
-                self.writer.add_scalar('diag/ent', ent, epoch)
-                print(f'ent: {ent}')
 
         self.writer.add_hparams(
             {'hp/M': self.M, 'hp/rl_n_steps': self.rl_n_steps},
@@ -274,4 +225,3 @@ class Trainer:
         if not name.endswith('.pt'):
             name += '.pt'
         torch.save(self.model.state_dict(), name)
-
