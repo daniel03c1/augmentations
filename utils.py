@@ -64,5 +64,7 @@ def lin_mapping_matrix(src_dim, des_dim, device=None):
 
 
 def standard_normalization(x, eps=1e-8):
-    return (x - x.mean()) / x.std().clamp(min=eps)
+    # return (x - x.mean()) / x.std().clamp(min=eps)
+    x = x - x.mean()
+    return x / x.abs().max().clamp(min=eps)
 

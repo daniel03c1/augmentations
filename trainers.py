@@ -7,7 +7,7 @@ from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 import tqdm
 
-from utils import get_default_device
+from utils import get_default_device, standard_normalization
 from utils import RunningStats
 
 
@@ -20,7 +20,7 @@ class Trainer:
                  bag_of_ops,
                  agent=None,
                  M=8,
-                 rl_n_steps=16,
+                 rl_steps=16,
                  deprecation_rate=1.,
                  normalize=None,
                  device=None):
@@ -36,7 +36,7 @@ class Trainer:
         self.best_acc = 0
 
         self.agent = agent
-        self.rl_n_steps = rl_n_steps
+        self.rl_steps = rl_steps
         self.deprecation_rate = deprecation_rate
         self.n_transforms = None if not agent else agent.n_transforms
 
@@ -63,7 +63,25 @@ class Trainer:
             if self.agent:
                 losses = torch.zeros(
                     (self.M,), dtype=torch.float, device=self.device)
-                actions = self.agent.act([0] * self.M)
+
+                # update bins
+                bins_diff = self.agent.max_bins - self.agent.min_bins
+                bins = min(1, 2 * (epoch+1) / n_epochs)
+                bins = int(self.agent.min_bins + bins*bins_diff)
+                if self.agent.get_bins() != bins:
+                    self.agent.reset_bins(bins)
+
+                # random actions
+                actions = self.agent.act(self.M)
+                prob = max(0, 0.5 * (1 - 2 * epoch / n_epochs))
+
+                if prob > 0:
+                    is_rand = torch.rand(self.M, 1, 1, device=actions.device)
+                    is_rand = (is_rand < prob).float()
+                    rand_actions = torch.rand(*actions.size(),
+                                              device=actions.device)
+                    actions = (1-is_rand)*actions + is_rand*rand_actions
+
                 policies = [self.agent.decode_policy(action, resize=False)
                             for action in actions]
                 self.stats.clear()
@@ -87,10 +105,19 @@ class Trainer:
                 if self.agent:
                     mini_size = batch_size // self.M
 
+                    _xs = xs
                     xs = torch.cat(
                         [policy(xs[i*mini_size:(i+1)*mini_size])
                             for i, policy in enumerate(policies)],
                         dim=0)
+
+                    prob = max(0, 0.5 * (1 - 2 * epoch / n_epochs))
+                    if prob > 0:
+                        is_easy = torch.rand(xs.size(0), 1, 1, 1, 
+                                             device=xs.device)
+                        is_easy = (is_easy < prob).float()
+                        xs = is_easy*_xs + (1-is_easy)*xs # temp
+
                     xs = self.random_erasing(xs)
 
                 if self.normalize:
@@ -155,26 +182,26 @@ class Trainer:
                 # summarize the epoch
                 mean = self.stats.mean().square().sum(-1).sqrt()
                 std = self.stats.std().square().sum(-1).sqrt()
-                coef = mean / (std + 1e-8)
+                coef = mean / std.clamp(min=1e-8)
 
                 self.writer.add_histogram('mean', mean, epoch)
                 self.writer.add_histogram('std', std, epoch)
                 self.writer.add_histogram('coef', coef, epoch)
                 self.writer.add_histogram('losses', losses, epoch)
 
-                losses = (losses - losses.mean()) / losses.std().clamp(min=1e-8)
+                coef = standard_normalization(coef)
+                losses = standard_normalization(losses)
 
-                rewards = -losses # - 4*coef
-                self.agent.update(actions, rewards)
+                rewards = - losses # - coef
+                self.agent.cache_batch(actions, rewards)
+                self.agent.learn(self.rl_steps)
 
                 # save image
-                image = self.agent.act([1])[0]
-                self.writer.add_image('output', image, epoch, dataformats='HW')
-
-                # [n_ops, bins+n_transforms]
-                action = self.agent.preprocess_action(
-                    self.agent.act(torch.zeros(1), train=False)[0])
+                action = self.agent.act(1, enable_dropout=False)[0]
+                action = self.agent.preprocess_actions(action)
                 n_ops = action.size(-2)
+                self.writer.add_image('output', action.transpose(0, 1), 
+                                      epoch, dataformats='HW')
 
                 zeros = torch.mean(action[-2, -self.n_transforms:]) * n_ops
                 self.writer.add_scalar('diag/zeros', zeros, epoch)
@@ -187,8 +214,23 @@ class Trainer:
                 self.writer.add_scalar('diag/danger_prob', danger_prob, epoch)
                 print(f'danger: ({danger_mag}, {danger_prob})')
 
+                acts = self.agent.act(128)
+                ent = (acts - acts.mean(0, keepdim=True)).abs().mean(0)
+                self.writer.add_scalar('diag/ent', ent.mean(), epoch)
+                self.writer.add_image('imgs/ent', ent.transpose(0, 1), 
+                                      epoch, dataformats='HW')
+                print(f'ent: {ent.mean()}, {ent.min()}, {ent.max()}')
+                
+                # corr
+                actions = actions - actions.mean(0, keepdim=True) # [batch, n_ops, k]
+                weights = torch.matmul(
+                    F.normalize(actions, dim=0).transpose(0, -1),
+                    F.normalize(rewards, dim=0)) # [k, n_ops]
+                self.writer.add_image('imgs/abs_corr', weights.abs(),
+                                      epoch, dataformats='HW')
+
         self.writer.add_hparams(
-            {'hp/M': self.M, 'hp/rl_n_steps': self.rl_n_steps},
+            {'hp/M': self.M, 'hp/rl_steps': self.rl_steps},
             {'hp/best_acc': self.best_acc})
 
         print(f"Best ACC: {self.best_acc:.5f}")
@@ -225,3 +267,4 @@ class Trainer:
         if not name.endswith('.pt'):
             name += '.pt'
         torch.save(self.model.state_dict(), name)
+

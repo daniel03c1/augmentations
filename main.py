@@ -51,8 +51,7 @@ def main(config, **kwargs):
     for mode in ['train', 'val']:
         dataloaders[mode] = dataset(config.data_path,
                                     train=mode == 'train',
-                                    transform=data_transforms[mode],
-                                    download=True)
+                                    transform=data_transforms[mode])
         dataloaders[mode] = torch.utils.data.DataLoader(
             dataloaders[mode],
             batch_size=config.batch_size,
@@ -69,16 +68,21 @@ def main(config, **kwargs):
                           nesterov=True,
                           weight_decay=5e-4)
 
-    v = Valuator([bag_of_ops.n_ops, config.bins+config.n_transforms])
-    agent = EvolveAgent(v, bag_of_ops, n_transforms=2)
+    agent = BasicAgent(bag_of_ops,
+                       n_transforms=config.n_transforms,
+                       min_bins=3,
+                       max_bins=config.bins,
+                       M=config.M,
+                       mem_maxlen=config.mem_size,
+                       batch_mem_maxlen=config.batch_mem_size,
+                       lr=config.c_lr)
 
     trainer = Trainer(model=model,
                       optimizer=optimizer,
                       criterion=criterion,
                       name=config.name,
                       bag_of_ops=bag_of_ops,
-                      rl_n_steps=config.rl_steps, 
-                      deprecation_rate=config.gamma,
+                      rl_steps=config.rl_steps, 
                       M=config.M, 
                       normalize=normalize,
                       agent=agent)
@@ -103,13 +107,15 @@ if __name__ == '__main__':
     args.add_argument('--M', type=int, default=8)
     args.add_argument('--mem_size', type=int, default=1)
     args.add_argument('--batch_mem_size', type=int, default=1)
-    args.add_argument('--rl_steps', type=int, default=2)
+    args.add_argument('--rl_steps', type=int, default=4)
+    args.add_argument('--c_lr', type=float, default=0.00035)
     args.add_argument('--ent_coef', type=float, default=1e-5)
-    args.add_argument('--gamma', type=float, default=1.)
     args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--dataset', type=str, default='cifar100')
     args.add_argument('--data_path', type=str, 
                       default='/datasets/datasets/cifar')
     config = args.parse_args()
+    print(config)
 
     main(config)
+
