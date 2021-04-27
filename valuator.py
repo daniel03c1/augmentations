@@ -5,7 +5,7 @@ import torch.nn as nn
 class Valuator(nn.Module):
     def __init__(self, 
                  input_shape,
-                 depth=3,
+                 depth=2,
                  h_dim=128,
                  **kwargs):
         super(Valuator, self).__init__(**kwargs)
@@ -44,9 +44,10 @@ class Valuator(nn.Module):
 
 if __name__ == '__main__':
     input_shape = [2, 17, 22]
-    brain = Valuator(input_shape)
+    brain = Valuator(input_shape, depth=2, h_dim=128)
     print(sum([p.numel() for p in brain.parameters()]))
 
     x = torch.randn([4]+input_shape)
     y = brain(x)
     print(y)
+

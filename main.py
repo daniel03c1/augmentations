@@ -8,7 +8,6 @@ from torch.optim import lr_scheduler
 
 from agents import *
 from augments import RandAugment
-from controllers import *
 from dataloader import *
 from discrete_transforms import transforms as bag_of_ops
 from trainers import Trainer
@@ -83,6 +82,7 @@ def main(config, **kwargs):
                       name=config.name,
                       bag_of_ops=bag_of_ops,
                       rl_steps=config.rl_steps, 
+                      noise_std=config.noise_std,
                       M=config.M, 
                       normalize=normalize,
                       agent=agent)
@@ -106,8 +106,9 @@ if __name__ == '__main__':
     args.add_argument('--epochs', type=int, default=200)
     args.add_argument('--M', type=int, default=8)
     args.add_argument('--mem_size', type=int, default=1)
-    args.add_argument('--batch_mem_size', type=int, default=1)
+    args.add_argument('--batch_mem_size', type=int, default=200)
     args.add_argument('--rl_steps', type=int, default=4)
+    args.add_argument('--noise_std', type=float, default=0.)
     args.add_argument('--c_lr', type=float, default=0.00035)
     args.add_argument('--ent_coef', type=float, default=1e-5)
     args.add_argument('--batch_size', type=int, default=128)

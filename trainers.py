@@ -21,6 +21,7 @@ class Trainer:
                  agent=None,
                  M=8,
                  rl_steps=16,
+                 noise_std=0.,
                  deprecation_rate=1.,
                  normalize=None,
                  device=None):
@@ -37,6 +38,7 @@ class Trainer:
 
         self.agent = agent
         self.rl_steps = rl_steps
+        self.noise_std = noise_std
         self.deprecation_rate = deprecation_rate
         self.n_transforms = None if not agent else agent.n_transforms
 
@@ -72,7 +74,7 @@ class Trainer:
                     self.agent.reset_bins(bins)
 
                 # random actions
-                actions = self.agent.act(self.M)
+                actions = self.agent.act(self.M, noise_std=self.noise_std)
                 prob = max(0, 0.5 * (1 - 2 * epoch / n_epochs))
 
                 if prob > 0:
@@ -216,9 +218,9 @@ class Trainer:
 
                 acts = self.agent.act(128)
                 ent = (acts - acts.mean(0, keepdim=True)).abs().mean(0)
-                self.writer.add_scalar('diag/ent', ent.mean(), epoch)
                 self.writer.add_image('imgs/ent', ent.transpose(0, 1), 
                                       epoch, dataformats='HW')
+                self.writer.add_histogram('ent', ent.reshape(-1), epoch)
                 print(f'ent: {ent.mean()}, {ent.min()}, {ent.max()}')
                 
                 # corr
@@ -226,7 +228,7 @@ class Trainer:
                 weights = torch.matmul(
                     F.normalize(actions, dim=0).transpose(0, -1),
                     F.normalize(rewards, dim=0)) # [k, n_ops]
-                self.writer.add_image('imgs/abs_corr', weights.abs(),
+                self.writer.add_image('imgs/abs_corr', weights, # .abs(),
                                       epoch, dataformats='HW')
 
         self.writer.add_hparams(

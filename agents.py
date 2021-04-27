@@ -54,13 +54,17 @@ class BasicAgent:
         self.epsilon = epsilon
         self.ent_coef = ent_coef
 
-    def act(self, n_samples, enable_dropout=True):
+    def act(self, n_samples, enable_dropout=True, noise_std=0):
         self.controller.eval()
         if enable_dropout:
             for m in self.controller.modules():
                 if m.__class__.__name__.startswith('Dropout'):
                     m.train()
-        return self.controller(n_samples)
+        actions = self.controller(n_samples)
+        noise = noise_std * torch.randn(*actions.size(), 
+                                        device=actions.device)
+        actions = (actions + noise).clamp(min=0., max=1.)
+        return actions
 
     def cache(self, action, reward):
         self.sample_memory.append((action.to(self.device).detach(),
@@ -83,42 +87,16 @@ class BasicAgent:
         for i in range(n_steps):
             self.c_optimizer.zero_grad()
 
-            old_actions, _ = self.recall(len(self.sample_memory))
-            old_actions.extend(
-                [torch.rand(*old_action.size(), device=old_action.device)
-                 for old_action in old_actions]) # add random data
-            processed = torch.stack(
-                [self.preprocess_actions(old_action, resize=True)
-                 for old_action in old_actions])
-            rewards = self.valuator(processed).squeeze(-1)
-            rewards = standard_normalization(rewards)
-            
-            rank = rewards.argsort()
-            best = rank[-int(len(self.sample_memory)*0.5):].tolist()
-            worst = rank[:int(len(self.sample_memory)*0.5)].tolist()
-            old_actions = [old_action for i, old_action in enumerate(old_actions)
-                           if i in best] \
-                        + [old_action for i, old_action in enumerate(old_actions)
-                           if i in worst]
-            rewards = torch.cat([rewards[best], rewards[worst]])
+            actions = self.controller(self.M)
+            scores = self.valuator(
+                self.preprocess_actions(actions, resize=True)).squeeze(-1)
 
-            old_actions = torch.stack(
-                [self.preprocess_actions(old_action, normalize=False,
-                                         resize=True, des_dim=self.get_bins())
-                 for old_action in old_actions])
-            actions = self.controller(old_actions.size(0))
+            ents = self.controller.calculate_entropy(actions)
+            ents = ents.clamp(min=1e-8).sqrt()
 
-            old_actions = self.preprocess_actions(old_actions)
-            actions = self.preprocess_actions(actions)
+            loss = - scores.mean() - self.ent_coef * ents.mean()
 
-            # Dist
-            loss = self.l1loss(actions, old_actions)
-            loss *= rewards.view(-1, *([1]*(len(loss.shape)-1)))
-
-            loss -= self.ent_coef \
-                  * self.controller.calculate_entropy(actions).clamp(min=1e-8).sqrt()
-
-            torch.mean(loss).backward(retain_graph=True)
+            loss.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.controller.parameters(),
                                            self.grad_norm)
             self.c_optimizer.step()
@@ -217,6 +195,7 @@ class BasicController(nn.Module):
                                         requires_grad=True,
                                         device=device) \
                           / math.sqrt(h_dim)
+        self.first_bn = nn.BatchNorm1d(h_dim)
 
         # middle
         self.n_layers = n_layers
@@ -227,11 +206,13 @@ class BasicController(nn.Module):
         self.dropouts = nn.ModuleList(
             [nn.Dropout(dropout_p) for i in range(n_layers)])
 
+        self.last_bn = nn.BatchNorm1d(h_dim)
         self.to_magnitude = nn.Linear(h_dim, self.n_ops * bins)
         self.to_prob = nn.Linear(h_dim, self.n_ops * n_transforms)
 
     def forward(self, n_samples):
         x = self.fixed_inputs.repeat(n_samples, 1)
+        x = self.first_bn(x)
 
         for i in range(self.n_layers):
             x = self.fcs[i](x)
@@ -239,6 +220,7 @@ class BasicController(nn.Module):
             x = x * x.sigmoid()
             x = self.dropouts[i](x)
 
+        x = self.last_bn(x)
         magnitudes = self.to_magnitude(x)
         magnitudes = magnitudes.reshape(-1, self.n_ops, self.bins)
 
