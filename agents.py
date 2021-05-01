@@ -44,13 +44,19 @@ class BasicAgent:
         self.l1loss = nn.L1Loss(reduction='none')
         self.v_optimizer = optim.Adam(self.valuator.parameters(), 
                                       weight_decay=1e-5)
-        self.v_criterion = nn.L1Loss()
+        self.v_criterion = nn.BCELoss(reduction='none') # L1Loss()
         self.grad_norm = grad_norm
 
         self.sample_memory = deque(maxlen=mem_maxlen * M)
         self.batch_memory = deque(maxlen=batch_mem_maxlen)
         self.M = M
         self.ent_coef = ent_coef
+
+        # mask
+        self.mask = torch.arange(M)
+        self.mask  = (self.mask - self.mask.unsqueeze(-1) > 0).float() \
+                                                              .to(self.device)
+        self.mask = self.mask / self.mask.sum()
 
     def act(self, n_samples, enable_dropout=True):
         self.controller.eval()
@@ -101,9 +107,11 @@ class BasicAgent:
                 target_actions = target_actions.clamp(min=0, max=1)
                 self.valuator.zero_grad()
 
-            probs = self.controller.calculate_probs(target_actions)            
             ents = self.controller.calculate_entropy(actions)
-            loss = - probs.mean() - self.ent_coef * ents.mean()
+            # probs = self.controller.calculate_probs(target_actions)
+            # loss = - probs.mean() - self.ent_coef * ents.mean()
+            log_probs = self.controller.calculate_log_probs(target_actions)
+            loss = - log_probs.mean() - self.ent_coef * ents.mean()
 
             loss.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.controller.parameters(),
@@ -135,11 +143,18 @@ class BasicAgent:
             for _ in range(epochs):
                 actions, rewards = random.sample(self.batch_memory, 1)[0]
 
+                ys_comb = rewards - rewards.unsqueeze(-1) > 0
+                ys_comb = ys_comb.float().to(self.device)
+
                 self.v_optimizer.zero_grad()
                 with torch.set_grad_enabled(True):
                     ys_hat = self.valuator(actions).squeeze(-1)
-                    loss = self.v_criterion(standard_normalization(ys_hat), 
-                                            rewards)
+
+                    ys_hat_comb = (ys_hat - ys_hat.unsqueeze(-1)).sigmoid()
+                    loss = self.v_criterion(ys_hat_comb, ys_comb)
+                    loss = (loss * self.mask).sum()
+                    # loss = self.v_criterion(standard_normalization(ys_hat), 
+                    #                         rewards)
                     loss.backward(retain_graph=True)
                     self.v_optimizer.step()
 
@@ -212,6 +227,7 @@ class BasicController(nn.Module):
         # for gaussian distribution
         self.eps = eps
         self.pi2 = 2 * math.pi
+        self.logprobs_const = - math.log(math.sqrt(self.pi2))
         self.ent_const = 0.5 + 0.5 * math.log(self.pi2)
 
     def forward(self, n_samples):
@@ -219,15 +235,18 @@ class BasicController(nn.Module):
                            device=self.device)
         return (self.means + rand).sigmoid()
 
-    def calculate_probs(self, actions):
+    def calculate_log_probs(self, actions):
         # reverse sigmoid
         actions = -torch.log(
             1/actions.clamp(min=self.eps, max=1-self.eps) - 1)
 
         stds = self.stds.clamp(min=self.eps)
-        probs = torch.exp(-torch.square((actions-self.means)/stds)/2) \
-              / (math.sqrt(self.pi2) * stds)
-        return probs
+        # probs = torch.exp(-torch.square((actions-self.means)/stds)/2) \
+        #       / (math.sqrt(self.pi2) * stds)
+        # return probs
+        log_probs = - torch.square((actions-self.means)/stds)/2 \
+                  - stds.log() + self.logprobs_const
+        return log_probs
 
     def calculate_entropy(self, actions):
         return self.ent_const + self.stds.clamp(min=self.eps).log()
