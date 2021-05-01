@@ -23,7 +23,6 @@ class BasicAgent:
                  batch_mem_maxlen=1,
                  lr=0.00035,
                  grad_norm=0.5,
-                 epsilon=0.2,
                  ent_coef=1e-5,
                  **args):
         self.device = get_default_device()
@@ -51,20 +50,15 @@ class BasicAgent:
         self.sample_memory = deque(maxlen=mem_maxlen * M)
         self.batch_memory = deque(maxlen=batch_mem_maxlen)
         self.M = M
-        self.epsilon = epsilon
         self.ent_coef = ent_coef
 
-    def act(self, n_samples, enable_dropout=True, noise_std=0):
+    def act(self, n_samples, enable_dropout=True):
         self.controller.eval()
         if enable_dropout:
             for m in self.controller.modules():
                 if m.__class__.__name__.startswith('Dropout'):
                     m.train()
-        actions = self.controller(n_samples)
-        noise = noise_std * torch.randn(*actions.size(), 
-                                        device=actions.device)
-        actions = (actions + noise).clamp(min=0., max=1.)
-        return actions
+        return self.controller(n_samples)
 
     def cache(self, action, reward):
         self.sample_memory.append((action.to(self.device).detach(),
@@ -80,21 +74,36 @@ class BasicAgent:
         self.batch_memory.append((actions.to(self.device).detach(),
                                   rewards.to(self.device).detach()))
 
-    def learn(self, n_steps=1):
+    def learn(self, n_steps=1, max_step=0.01):
         self.train_valuator()
 
         self.controller.train()
+        self.valuator.zero_grad()
+
         for i in range(n_steps):
             self.c_optimizer.zero_grad()
 
             actions = self.controller(self.M)
-            scores = self.valuator(
-                self.preprocess_actions(actions, resize=True)).squeeze(-1)
 
+            # calculate target actions
+            with torch.set_grad_enabled(True):
+                target_actions = actions.detach()
+                target_actions.requires_grad = True
+
+                scores = self.valuator(
+                    self.preprocess_actions(target_actions, resize=True))
+                (-scores.mean()).backward()
+
+                action_grads = target_actions.grad.data
+                action_grads = action_grads.clamp(min=-max_step, max=max_step)
+
+                target_actions = target_actions.detach() + action_grads.detach()
+                target_actions = target_actions.clamp(min=0, max=1)
+                self.valuator.zero_grad()
+
+            probs = self.controller.calculate_probs(target_actions)            
             ents = self.controller.calculate_entropy(actions)
-            ents = ents.clamp(min=1e-8).sqrt()
-
-            loss = - scores.mean() - self.ent_coef * ents.mean()
+            loss = - probs.mean() - self.ent_coef * ents.mean()
 
             loss.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(self.controller.parameters(),
@@ -129,7 +138,8 @@ class BasicAgent:
                 self.v_optimizer.zero_grad()
                 with torch.set_grad_enabled(True):
                     ys_hat = self.valuator(actions).squeeze(-1)
-                    loss = self.v_criterion(standard_normalization(ys_hat), rewards)
+                    loss = self.v_criterion(standard_normalization(ys_hat), 
+                                            rewards)
                     loss.backward(retain_graph=True)
                     self.v_optimizer.step()
 
@@ -179,6 +189,7 @@ class BasicController(nn.Module):
                  n_layers=2,
                  h_dim=256,
                  dropout_p=0.4,
+                 eps=1e-6,
                  device=None,
                  **kwargs):
         super(BasicController, self).__init__(**kwargs)
@@ -190,71 +201,50 @@ class BasicController(nn.Module):
         self.device = device
 
         ''' modules '''
-        self.outdim = self.bins + self.n_transforms
-        self.fixed_inputs = torch.randn((1, h_dim), 
-                                        requires_grad=True,
-                                        device=device) \
-                          / math.sqrt(h_dim)
-        self.first_bn = nn.BatchNorm1d(h_dim)
+        outdim = self.bins + self.n_transforms
+        self.means = nn.parameter.Parameter(
+            torch.randn((1, self.n_ops, outdim), device=device),
+            requires_grad=True)
+        self.stds = nn.parameter.Parameter(
+            torch.randn((1, self.n_ops, outdim), device=device),
+            requires_grad=True)
 
-        # middle
-        self.n_layers = n_layers
-        self.fcs = nn.ModuleList(
-            [nn.Linear(h_dim, h_dim) for i in range(n_layers)])
-        self.batchnorms = nn.ModuleList(
-            [nn.BatchNorm1d(h_dim) for i in range(n_layers)])
-        self.dropouts = nn.ModuleList(
-            [nn.Dropout(dropout_p) for i in range(n_layers)])
-
-        self.last_bn = nn.BatchNorm1d(h_dim)
-        self.to_magnitude = nn.Linear(h_dim, self.n_ops * bins)
-        self.to_prob = nn.Linear(h_dim, self.n_ops * n_transforms)
+        # for gaussian distribution
+        self.eps = eps
+        self.pi2 = 2 * math.pi
+        self.ent_const = 0.5 + 0.5 * math.log(self.pi2)
 
     def forward(self, n_samples):
-        x = self.fixed_inputs.repeat(n_samples, 1)
-        x = self.first_bn(x)
+        rand = torch.randn((n_samples, self.n_ops, self.bins+self.n_transforms),
+                           device=self.device)
+        return (self.means + rand).sigmoid()
 
-        for i in range(self.n_layers):
-            x = self.fcs[i](x)
-            x = self.batchnorms[i](x)
-            x = x * x.sigmoid()
-            x = self.dropouts[i](x)
+    def calculate_probs(self, actions):
+        # reverse sigmoid
+        actions = -torch.log(
+            1/actions.clamp(min=self.eps, max=1-self.eps) - 1)
 
-        x = self.last_bn(x)
-        magnitudes = self.to_magnitude(x)
-        magnitudes = magnitudes.reshape(-1, self.n_ops, self.bins)
-
-        probs = self.to_prob(x)
-        probs = probs.reshape(-1, self.n_ops, self.n_transforms)
-        return torch.cat([magnitudes, probs], -1).sigmoid()
-
-    def calculate_log_probs(self, actions):
-        return actions.clamp(min=EPS).log()
+        stds = self.stds.clamp(min=self.eps)
+        probs = torch.exp(-torch.square((actions-self.means)/stds)/2) \
+              / (math.sqrt(self.pi2) * stds)
+        return probs
 
     def calculate_entropy(self, actions):
-        return (actions - actions.mean(0, keepdim=True)).abs()
+        return self.ent_const + self.stds.clamp(min=self.eps).log()
 
     def reset_bins(self, bins):
         with torch.no_grad():
-            weight = self.to_magnitude.weight # (n_ops * bins, h_dim)
-            bias = self.to_magnitude.bias # (n_ops * bins)
+            new_means = torch.cat(
+                [linear_resize(self.means[..., :self.bins], bins),
+                 self.means[..., self.bins:]],
+                -1)
+            new_stds = torch.cat(
+                [linear_resize(self.stds[..., :self.bins], bins),
+                 self.stds[..., self.bins:]],
+                -1)
 
-            # weight update
-            weight = weight.reshape(self.n_ops, self.bins, -1)
-            weight = weight.transpose(-2, -1)
-            weight = linear_resize(weight, bins)
-            weight = weight.transpose(-2, -1)
-            weight = weight.reshape(-1, weight.size(-1))
-            self.to_magnitude.weight = nn.parameter.Parameter(
-                weight, requires_grad=True)
-
-            # bias update
-            bias = bias.reshape(self.n_ops, self.bins)
-            bias = linear_resize(bias, bins)
-            bias = bias.reshape(-1)
-            self.to_magnitude.bias = nn.parameter.Parameter(
-                bias, requires_grad=True)
-
+            self.means = nn.parameter.Parameter(new_means, requires_grad=True)
+            self.stds = nn.parameter.Parameter(new_stds, requires_grad=True)
             self.bins = bins
 
 
@@ -289,11 +279,13 @@ if __name__ == '__main__':
                        grad_norm=0.5,
                        epsilon=0.2,
                        ent_coef=1e-5)
+    print(agent.controller.state_dict())
     actions = agent.act(8, enable_dropout=True)
     rewards = torch.rand(8)
     print(agent.act(1).size())
     agent.cache_batch(actions, rewards)
     agent.learn(n_steps=32)
+    print(agent.controller.state_dict())
     policy = agent.decode_policy(actions[0], resize=False)
 
     xs = torch.rand(8, 3, 32, 32)
@@ -301,9 +293,9 @@ if __name__ == '__main__':
         print(policy(xs).size())
 
     ct = BasicController(bag.n_ops, n_transforms=4, bins=3)
-    print(ct(8)[0])
+    print(ct(3).size(), ct.state_dict()['means'].size())
     ct.reset_bins(4)
-    print(ct(8)[0])
+    print(ct(3).size(), ct.state_dict()['means'].size())
     ct.reset_bins(5)
-    print(ct(8)[0])
+    print(ct(3).size(), ct.state_dict()['means'].size())
 
